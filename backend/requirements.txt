@@ -1,0 +1,14 @@
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart
+torch
+transformers
+pillow
+numpy
+faiss-cpu
+opencv-python-headless
+pytest
+httpx
+scipy
+pydub
+
