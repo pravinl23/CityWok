@@ -24,18 +24,35 @@ def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://local
     print(f"  File: {os.path.basename(file_path)} ({file_size_mb:.1f} MB)")
     print(f"  Uploading to backend...", end="", flush=True)
     
-    try:
-        with open(file_path, 'rb') as f:
-            files = {'file': (os.path.basename(file_path), f, 'video/mp4')}
-            params = {'episode_id': episode_id}
-            
-            # Use stream=True to show progress, but for simplicity we'll just show upload start
-            response = requests.post(
-                f"{api_url}/api/v1/ingest",
-                files=files,
-                params=params,
-                timeout=3600  # 1 hour timeout for large files
-            )
+    # Try both localhost and 127.0.0.1 if localhost fails
+    urls_to_try = [api_url]
+    if "localhost" in api_url:
+        urls_to_try.append(api_url.replace("localhost", "127.0.0.1"))
+    
+    last_error = None
+    for url in urls_to_try:
+        try:
+            with open(file_path, 'rb') as f:
+                files = {'file': (os.path.basename(file_path), f, 'video/mp4')}
+                params = {'episode_id': episode_id}
+                
+                # Use stream=True to show progress, but for simplicity we'll just show upload start
+                response = requests.post(
+                    f"{url}/api/v1/ingest",
+                    files=files,
+                    params=params,
+                    timeout=3600  # 1 hour timeout for large files
+                )
+                break  # Success, exit the retry loop
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_error = e
+            if url == urls_to_try[-1]:  # Last URL to try
+                raise
+            continue  # Try next URL
+    else:
+        # If we exhausted all URLs, raise the last error
+        if last_error:
+            raise last_error
             
         print(" ✓ Uploaded")
         print(f"  Processing (extracting frames, computing embeddings, fingerprinting audio)...", end="", flush=True)
@@ -50,10 +67,12 @@ def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://local
             print(f"  ✗ Error: {response.status_code} - {response.text}")
             return False
             
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
         print(" ✗ Connection Failed")
-        print("  Error: Could not connect to backend. Is the server running?")
-        print("  Start it with: ./start_backend.sh or cd backend && source venv/bin/activate && uvicorn app.main:app --reload")
+        print(f"  Error: Could not connect to backend at {api_url}")
+        print(f"  Details: {str(e)}")
+        print("  Make sure the backend is running:")
+        print("    cd backend && source venv/bin/activate && uvicorn app.main:app --reload")
         return False
     except requests.exceptions.Timeout:
         print(" ✗ Timeout")
