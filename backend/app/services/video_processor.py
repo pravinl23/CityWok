@@ -10,10 +10,23 @@ class VideoProcessor:
     def __init__(self):
         self.model_id = settings.CLIP_MODEL_ID
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Loading CLIP model {self.model_id} on {self.device}...")
-        self.processor = CLIPProcessor.from_pretrained(self.model_id)
-        self.model = CLIPModel.from_pretrained(self.model_id).to(self.device)
-        self.model.eval()
+        self.processor = None
+        self.model = None
+        self._model_loaded = False
+
+    def _ensure_model_loaded(self):
+        """Lazy load the model only when needed."""
+        if not self._model_loaded:
+            print(f"Loading CLIP model {self.model_id} on {self.device}...")
+            try:
+                self.processor = CLIPProcessor.from_pretrained(self.model_id)
+                self.model = CLIPModel.from_pretrained(self.model_id).to(self.device)
+                self.model.eval()
+                self._model_loaded = True
+                print("CLIP model loaded successfully.")
+            except Exception as e:
+                print(f"Error loading CLIP model: {e}")
+                raise
 
     def extract_frames(self, video_path: str, sampling_rate: int = 1) -> List[Tuple[float, Image.Image]]:
         """
@@ -55,6 +68,8 @@ class VideoProcessor:
         if not images:
             return np.array([])
 
+        self._ensure_model_loaded()
+        
         inputs = self.processor(images=images, return_tensors="pt", padding=True)
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         
