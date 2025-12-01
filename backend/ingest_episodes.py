@@ -30,6 +30,8 @@ def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://local
         urls_to_try.append(api_url.replace("localhost", "127.0.0.1"))
     
     last_error = None
+    response = None
+    
     for url in urls_to_try:
         try:
             with open(file_path, 'rb') as f:
@@ -47,43 +49,37 @@ def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://local
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             last_error = e
             if url == urls_to_try[-1]:  # Last URL to try
-                raise
+                print(" ✗ Connection Failed")
+                print(f"  Error: Could not connect to backend at {api_url}")
+                print(f"  Details: {str(e)}")
+                print("  Make sure the backend is running:")
+                print("    cd backend && source venv/bin/activate && uvicorn app.main:app --reload")
+                return False
             continue  # Try next URL
-    else:
-        # If we exhausted all URLs, raise the last error
-        if last_error:
-            raise last_error
-            
-        print(" ✓ Uploaded")
-        print(f"  Processing (extracting frames, computing embeddings, fingerprinting audio)...", end="", flush=True)
-            
-        if response.status_code == 200:
-            result = response.json()
-            print(" ✓ Complete")
-            print(f"  ✓ Successfully ingested {episode_id}")
-            return True
-        else:
-            print(" ✗ Failed")
-            print(f"  ✗ Error: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(" ✗ Error")
+            print(f"  Error: {e}")
             return False
-            
-    except requests.exceptions.ConnectionError as e:
+    
+    if response is None:
         print(" ✗ Connection Failed")
-        print(f"  Error: Could not connect to backend at {api_url}")
-        print(f"  Details: {str(e)}")
-        print("  Make sure the backend is running:")
-        print("    cd backend && source venv/bin/activate && uvicorn app.main:app --reload")
+        print(f"  Error: Could not connect to backend")
         return False
-    except requests.exceptions.Timeout:
-        print(" ✗ Timeout")
-        print("  Error: Request timed out. The file might be too large or processing is taking too long.")
-        return False
-    except Exception as e:
-        print(" ✗ Error")
-        print(f"  Error: {e}")
+            
+    print(" ✓ Uploaded")
+    print(f"  Processing (extracting frames, computing embeddings, fingerprinting audio)...", end="", flush=True)
+        
+    if response.status_code == 200:
+        result = response.json()
+        print(" ✓ Complete")
+        print(f"  ✓ Successfully ingested {episode_id}")
+        return True
+    else:
+        print(" ✗ Failed")
+        print(f"  ✗ Error: {response.status_code} - {response.text}")
         return False
 
-def ingest_directory(directory: str, api_url: str = "http://localhost:8000"):
+def ingest_directory(directory: str, api_url: str = "http://localhost:8000", skip_existing: bool = True):
     """
     Ingest all video files in a directory.
     Assumes filenames contain episode identifiers (e.g., S01E01.mp4) or "Episode X".
@@ -95,11 +91,28 @@ def ingest_directory(directory: str, api_url: str = "http://localhost:8000"):
         print(f"No video files found in {directory}")
         return
     
+    # Check which episodes are already ingested
+    already_ingested = set()
+    if skip_existing:
+        try:
+            from app.services.vector_db import vector_db
+            from collections import Counter
+            episode_counts = Counter()
+            for meta in vector_db.metadata.values():
+                ep_id = meta.get('episode_id', 'unknown')
+                episode_counts[ep_id] += 1
+            already_ingested = set(episode_counts.keys())
+            if already_ingested:
+                print(f"Found {len(already_ingested)} already ingested episodes: {sorted(already_ingested)}")
+        except Exception as e:
+            print(f"Warning: Could not check existing episodes: {e}")
+    
     print(f"Found {len(video_files)} video files. Starting ingestion...")
     print("=" * 60)
     
     successful = 0
     failed = 0
+    skipped = 0
     
     for idx, video_file in enumerate(sorted(video_files), 1):
         filename = video_file.stem  # filename without extension
@@ -126,15 +139,30 @@ def ingest_directory(directory: str, api_url: str = "http://localhost:8000"):
             episode_id = filename
             print(f"  Warning: Could not extract episode ID from {filename}, using '{episode_id}'")
         
-        if ingest_episode(str(video_file), episode_id, api_url):
-            successful += 1
-        else:
+        # Skip if already ingested
+        if skip_existing and episode_id in already_ingested:
+            print(f"  ⏭️  Skipping {episode_id} (already ingested)")
+            skipped += 1
+            print("-" * 60)
+            continue
+        
+        try:
+            if ingest_episode(str(video_file), episode_id, api_url):
+                successful += 1
+            else:
+                failed += 1
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Interrupted by user")
+            print(f"Progress: {successful} successful, {failed} failed, {skipped} skipped so far")
+            raise
+        except Exception as e:
+            print(f"  ✗ Unexpected error: {e}")
             failed += 1
         
         print("-" * 60)
     
     print(f"\n{'=' * 60}")
-    print(f"Summary: {successful} successful, {failed} failed out of {len(video_files)} total")
+    print(f"Summary: {successful} successful, {failed} failed, {skipped} skipped out of {len(video_files)} total")
     print(f"{'=' * 60}")
 
 if __name__ == "__main__":
