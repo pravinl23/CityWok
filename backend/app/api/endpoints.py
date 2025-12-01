@@ -1,0 +1,182 @@
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from typing import Dict, Any
+import os
+import shutil
+import uuid
+from app.services.video_processor import video_processor
+from app.services.vector_db import vector_db
+from app.services.audio_fingerprint import audio_matcher
+from app.core.config import settings
+from collections import Counter
+
+router = APIRouter()
+
+def cleanup_file(path: str):
+    if os.path.exists(path):
+        os.remove(path)
+
+@router.post("/identify")
+async def identify_episode(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...)
+):
+    """
+    Identify the episode from a video clip.
+    """
+    if not file.filename.endswith(('.mp4', '.mov', '.avi')):
+        raise HTTPException(status_code=400, detail="Invalid file format. Please upload a video file.")
+        
+    # Save temp file
+    file_id = str(uuid.uuid4())
+    temp_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}_{file.filename}")
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    finally:
+        file.file.close()
+        
+    # Schedule cleanup
+    background_tasks.add_task(cleanup_file, temp_path)
+    
+    # 1. Video Analysis
+    try:
+        # Extract frames
+        frames_data = video_processor.extract_frames(temp_path, sampling_rate=1)
+        if not frames_data:
+             return {"message": "No frames extracted", "match": None}
+             
+        timestamps, images = zip(*frames_data)
+        
+        # Compute embeddings
+        embeddings = video_processor.compute_embeddings(list(images))
+        
+        # Search in Vector DB
+        # Search top 5 matches for each frame
+        search_results = vector_db.search(embeddings, k=5)
+        
+        # Aggregate results (Voting)
+        episode_votes = Counter()
+        episode_timestamps = {}  # episode_id -> list of timestamps
+        
+        for frame_idx, results in enumerate(search_results):
+            query_timestamp = timestamps[frame_idx]
+            for score, metadata in results:
+                # Filter by score threshold (e.g., 0.8) if needed
+                if score > 0.5: # Lower threshold for MVP
+                    ep_id = metadata['episode_id']
+                    ep_timestamp = metadata['timestamp']
+                    
+                    episode_votes[ep_id] += 1
+                    
+                    if ep_id not in episode_timestamps:
+                        episode_timestamps[ep_id] = []
+                    # Estimate where the clip starts in the episode
+                    # If match is at ep_time T and query is at q_time t, start is T - t
+                    episode_timestamps[ep_id].append(ep_timestamp - query_timestamp)
+
+        best_visual_match = None
+        if episode_votes:
+            best_ep_id, votes = episode_votes.most_common(1)[0]
+            # Calculate average estimated start time
+            est_times = episode_timestamps[best_ep_id]
+            avg_start_time = sum(est_times) / len(est_times)
+            
+            best_visual_match = {
+                "episode_id": best_ep_id,
+                "estimated_timestamp": max(0, avg_start_time),
+                "confidence": votes,
+                "method": "visual"
+            }
+            
+    except Exception as e:
+        print(f"Visual analysis failed: {e}")
+        best_visual_match = None
+
+    # 2. Audio Analysis (Fallback or Confirmation)
+    best_audio_match = None
+    try:
+        audio_result = audio_matcher.match_clip(temp_path)
+        if audio_result:
+            best_audio_match = {
+                "episode_id": audio_result['episode_id'],
+                "estimated_timestamp": max(0, audio_result['timestamp']),
+                "confidence": audio_result['confidence'],
+                "method": "audio"
+            }
+    except Exception as e:
+        print(f"Audio analysis failed: {e}")
+        
+    # Final Decision Logic
+    final_match = None
+    if best_visual_match and best_audio_match:
+        if best_visual_match['episode_id'] == best_audio_match['episode_id']:
+            final_match = best_visual_match
+            final_match['confidence'] = "High (Audio+Video)"
+        else:
+            # Conflict: Prefer audio for exactness if confidence is high, else video
+            # For now, return both or prefer video if votes are high
+            final_match = best_audio_match # Prefer audio for now as it's usually exact
+    elif best_visual_match:
+        final_match = best_visual_match
+    elif best_audio_match:
+        final_match = best_audio_match
+        
+    if final_match:
+        # Format timestamp
+        seconds = final_match['estimated_timestamp']
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        time_str = "%d:%02d:%02d" % (h, m, s)
+        
+        return {
+            "match_found": True,
+            "episode": final_match['episode_id'],
+            "timestamp": time_str,
+            "details": final_match
+        }
+    else:
+        return {
+            "match_found": False,
+            "message": "Could not identify episode."
+        }
+
+@router.post("/ingest")
+async def ingest_episode(
+    episode_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...)
+):
+    """
+    Ingest an episode into the database (Admin/Dev tool).
+    """
+    temp_path = os.path.join(settings.UPLOAD_DIR, f"ingest_{episode_id}_{file.filename}")
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    
+    with open(temp_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    # Process immediately for MVP simplicity (should be background task)
+    # 1. Video
+    try:
+        frames = video_processor.extract_frames(temp_path, sampling_rate=0.5) # Sparse for index
+        if frames:
+            timestamps, images = zip(*frames)
+            embeddings = video_processor.compute_embeddings(list(images))
+            
+            metadata = [{"episode_id": episode_id, "timestamp": t} for t in timestamps]
+            vector_db.add_embeddings(embeddings, metadata)
+    except Exception as e:
+        return {"status": "error", "message": f"Video processing failed: {str(e)}"}
+        
+    # 2. Audio
+    try:
+        audio_matcher.add_episode(episode_id, temp_path)
+    except Exception as e:
+         print(f"Audio ingestion warning: {e}")
+
+    background_tasks.add_task(cleanup_file, temp_path)
+    
+    return {"status": "success", "message": f"Ingested episode {episode_id}"}
+
