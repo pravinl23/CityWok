@@ -31,7 +31,9 @@ async def identify_episode(
     """
     Identify the episode from a video clip.
     """
-    if not file.filename.endswith(('.mp4', '.mov', '.avi')):
+    # Check file extension (case-insensitive)
+    filename_lower = file.filename.lower() if file.filename else ""
+    if not filename_lower.endswith(('.mp4', '.mov', '.avi', '.mpeg', '.mpg')):
         raise HTTPException(status_code=400, detail="Invalid file format. Please upload a video file.")
         
     # Save temp file
@@ -50,19 +52,26 @@ async def identify_episode(
     
     # 1. Video Analysis
     try:
+        print(f"Processing file: {file.filename} ({file_size / (1024*1024):.1f} MB)")
         # Extract frames
+        print("Extracting frames...")
         frames_data = video_processor.extract_frames(temp_path, sampling_rate=1)
         if not frames_data:
-             return {"message": "No frames extracted", "match": None}
-             
+             return {"match_found": False, "message": "No frames extracted from video"}
+        
+        print(f"Extracted {len(frames_data)} frames")
         timestamps, images = zip(*frames_data)
         
         # Compute embeddings
+        print("Computing embeddings...")
         embeddings = video_processor.compute_embeddings(list(images))
+        print(f"Computed {len(embeddings)} embeddings")
         
         # Search in Vector DB
         # Search top 5 matches for each frame
+        print("Searching vector database...")
         search_results = vector_db.search(embeddings, k=5)
+        print(f"Found {len(search_results)} search result sets")
         
         # Aggregate results (Voting)
         episode_votes = Counter()

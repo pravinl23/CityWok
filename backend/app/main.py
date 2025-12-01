@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.api import endpoints
 from app.core.config import settings
 import os
+import traceback
 
 app = FastAPI(title="CityWok - Episode Identifier", version="0.1.0")
 
@@ -26,3 +28,13 @@ async def startup_event():
 @app.get("/")
 async def root():
     return {"message": "Welcome to CityWok API"}
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler to catch and log all errors."""
+    print(f"Unhandled exception: {exc}")
+    print(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"}
+    )
