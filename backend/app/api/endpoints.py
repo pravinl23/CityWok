@@ -5,7 +5,15 @@ import shutil
 import uuid
 from app.services.video_processor import video_processor
 from app.services.vector_db import vector_db
-from app.services.audio_fingerprint import audio_matcher
+
+# Audio fingerprinting is optional
+try:
+    from app.services.audio_fingerprint import audio_matcher
+    AUDIO_AVAILABLE = True
+except ImportError:
+    AUDIO_AVAILABLE = False
+    audio_matcher = None
+    print("Warning: Audio fingerprinting not available")
 from app.core.config import settings
 from collections import Counter
 
@@ -96,17 +104,18 @@ async def identify_episode(
 
     # 2. Audio Analysis (Fallback or Confirmation)
     best_audio_match = None
-    try:
-        audio_result = audio_matcher.match_clip(temp_path)
-        if audio_result:
-            best_audio_match = {
-                "episode_id": audio_result['episode_id'],
-                "estimated_timestamp": max(0, audio_result['timestamp']),
-                "confidence": audio_result['confidence'],
-                "method": "audio"
-            }
-    except Exception as e:
-        print(f"Audio analysis failed: {e}")
+    if AUDIO_AVAILABLE and audio_matcher:
+        try:
+            audio_result = audio_matcher.match_clip(temp_path)
+            if audio_result:
+                best_audio_match = {
+                    "episode_id": audio_result['episode_id'],
+                    "estimated_timestamp": max(0, audio_result['timestamp']),
+                    "confidence": audio_result['confidence'],
+                    "method": "audio"
+                }
+        except Exception as e:
+            print(f"Audio analysis failed: {e}")
         
     # Final Decision Logic
     final_match = None
@@ -171,10 +180,11 @@ async def ingest_episode(
         return {"status": "error", "message": f"Video processing failed: {str(e)}"}
         
     # 2. Audio
-    try:
-        audio_matcher.add_episode(episode_id, temp_path)
-    except Exception as e:
-         print(f"Audio ingestion warning: {e}")
+    if AUDIO_AVAILABLE and audio_matcher:
+        try:
+            audio_matcher.add_episode(episode_id, temp_path)
+        except Exception as e:
+             print(f"Audio ingestion warning: {e}")
 
     background_tasks.add_task(cleanup_file, temp_path)
     

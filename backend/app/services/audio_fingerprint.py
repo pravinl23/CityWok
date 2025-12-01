@@ -1,10 +1,17 @@
 import os
 import numpy as np
-from pydub import AudioSegment
 from scipy.signal import spectrogram
 from typing import List, Dict, Any, Tuple
 from app.core.config import settings
 import hashlib
+
+# Try to import pydub, but make it optional for Python 3.13 compatibility
+try:
+    from pydub import AudioSegment
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+    print("Warning: pydub not available. Audio fingerprinting will be limited.")
 
 class AudioFingerprinter:
     def __init__(self):
@@ -17,13 +24,26 @@ class AudioFingerprinter:
         Generate fingerprints for an audio file.
         Returns a list of (hash, time_offset) tuples.
         """
+        if not PYDUB_AVAILABLE:
+            # Fallback: use librosa or ffmpeg directly
+            try:
+                import librosa
+                samples, sr = librosa.load(file_path, sr=11025, mono=True)
+                samples = (samples * 32767).astype(np.int16)  # Convert to int16 like pydub
+            except ImportError:
+                print("Warning: Neither pydub nor librosa available. Audio fingerprinting disabled.")
+                return []
+        
         try:
-            # Load audio using pydub
-            audio = AudioSegment.from_file(file_path)
-            # Convert to mono, 11kHz
-            audio = audio.set_channels(1).set_frame_rate(11025)
-            
-            samples = np.array(audio.get_array_of_samples())
+            if PYDUB_AVAILABLE:
+                # Load audio using pydub
+                audio = AudioSegment.from_file(file_path)
+                # Convert to mono, 11kHz
+                audio = audio.set_channels(1).set_frame_rate(11025)
+                samples = np.array(audio.get_array_of_samples())
+            else:
+                # Already loaded with librosa above
+                pass
             
             # Generate spectrogram
             f, t, Sxx = spectrogram(samples, fs=11025, nperseg=1024, noverlap=512)

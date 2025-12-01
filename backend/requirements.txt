@@ -11,4 +11,5 @@ pytest
 httpx
 scipy
 pydub
+librosa
 
