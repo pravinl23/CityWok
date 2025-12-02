@@ -34,30 +34,45 @@ class VideoProcessor:
         Returns a list of (timestamp, PIL Image) tuples.
         """
         frames = []
-        cap = cv2.VideoCapture(video_path)
-        
-        if not cap.isOpened():
-            raise ValueError(f"Could not open video file: {video_path}")
+        cap = None
+        try:
+            cap = cv2.VideoCapture(video_path)
             
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        interval = int(fps / sampling_rate) if sampling_rate < fps else 1
-        
-        frame_count = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+            if not cap.isOpened():
+                raise ValueError(f"Could not open video file: {video_path}")
                 
-            if frame_count % interval == 0:
-                # Convert BGR (OpenCV) to RGB (PIL)
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_image = Image.fromarray(rgb_frame)
-                timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-                frames.append((timestamp, pil_image))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            if fps <= 0:
+                fps = 30  # Default fallback
+            interval = int(fps / sampling_rate) if sampling_rate < fps else 1
             
-            frame_count += 1
-            
-        cap.release()
+            frame_count = 0
+            max_frames = 100  # Limit to prevent memory issues
+            while len(frames) < max_frames:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                    
+                if frame_count % interval == 0:
+                    try:
+                        # Convert BGR (OpenCV) to RGB (PIL)
+                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        pil_image = Image.fromarray(rgb_frame)
+                        timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                        frames.append((timestamp, pil_image))
+                    except Exception as e:
+                        print(f"Error processing frame {frame_count}: {e}")
+                        continue
+                
+                frame_count += 1
+        except Exception as e:
+            print(f"Error in extract_frames: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        finally:
+            if cap is not None:
+                cap.release()
         return frames
 
     def compute_embeddings(self, images: List[Image.Image]) -> np.ndarray:

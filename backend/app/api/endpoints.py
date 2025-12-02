@@ -93,7 +93,6 @@ async def identify_episode(
                     # If match is at ep_time T and query is at q_time t, start is T - t
                     episode_timestamps[ep_id].append(ep_timestamp - query_timestamp)
 
-        best_visual_match = None
         if episode_votes:
             best_ep_id, votes = episode_votes.most_common(1)[0]
             # Calculate average estimated start time
@@ -106,9 +105,14 @@ async def identify_episode(
                 "confidence": votes,
                 "method": "visual"
             }
+            print(f"Best visual match: {best_ep_id} with {votes} votes")
+        else:
+            print("No episode votes found")
             
     except Exception as e:
+        import traceback
         print(f"Visual analysis failed: {e}")
+        traceback.print_exc()
         best_visual_match = None
 
     # 2. Audio Analysis (Fallback or Confirmation)
