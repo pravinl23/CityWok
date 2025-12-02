@@ -79,17 +79,69 @@ def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://local
         print(f"  ✗ Error: {response.status_code} - {response.text}")
         return False
 
-def ingest_directory(directory: str, api_url: str = "http://localhost:8000", skip_existing: bool = True):
+def extract_episode_number(filename: str) -> tuple:
+    """
+    Extract season and episode numbers from filename.
+    Returns (season_num, episode_num) or (None, None) if not found.
+    """
+    # Pattern 1: S##E## (e.g., S01E01, s2e5)
+    match_sxe = re.search(r'[Ss](\d+)[Ee](\d+)', filename)
+    if match_sxe:
+        return (int(match_sxe.group(1)), int(match_sxe.group(2)))
+    
+    # Pattern 2: Episode X (e.g., Episode 1, episode 10)
+    match_ep = re.search(r'Episode\s+(\d+)', filename, re.IGNORECASE)
+    if match_ep:
+        return (None, int(match_ep.group(1)))  # Season unknown
+    
+    # Pattern 3: Just a number at the start or end (e.g., "1.mp4", "Episode1.mp4")
+    match_num = re.search(r'\b(\d+)\b', filename)
+    if match_num:
+        return (None, int(match_num.group(1)))
+    
+    return (None, None)
+
+def sort_files_by_episode(files: list) -> list:
+    """
+    Sort files by episode number, handling numeric ordering correctly.
+    """
+    def get_sort_key(file_path):
+        filename = file_path.stem
+        season, episode = extract_episode_number(filename)
+        if season is not None and episode is not None:
+            return (season, episode)
+        elif episode is not None:
+            return (0, episode)  # Default to season 0 if unknown
+        else:
+            return (999, 999)  # Put unrecognized files at end
+    
+    return sorted(files, key=get_sort_key)
+
+def ingest_directory(directory: str, api_url: str = "http://localhost:8000", skip_existing: bool = True, season: int = None):
     """
     Ingest all video files in a directory.
-    Assumes filenames contain episode identifiers (e.g., S01E01.mp4) or "Episode X".
+    
+    Args:
+        directory: Path to directory containing video files
+        api_url: Backend API URL
+        skip_existing: Whether to skip already-ingested episodes
+        season: Season number to use for "Episode X" patterns (defaults to 1 if not specified)
     """
     directory = Path(directory)
-    video_files = list(directory.glob("*.mp4")) + list(directory.glob("*.mov")) + list(directory.glob("*.avi"))
+    # Search recursively for video files in nested directories
+    video_files = (
+        list(directory.glob("**/*.mp4")) + 
+        list(directory.glob("**/*.mov")) + 
+        list(directory.glob("**/*.avi")) +
+        list(directory.glob("**/*.mkv"))
+    )
     
     if not video_files:
         print(f"No video files found in {directory}")
         return
+    
+    # Sort files by episode number (not alphabetically)
+    video_files = sort_files_by_episode(video_files)
     
     # Check which episodes are already ingested
     already_ingested = set()
@@ -107,37 +159,39 @@ def ingest_directory(directory: str, api_url: str = "http://localhost:8000", ski
         except Exception as e:
             print(f"Warning: Could not check existing episodes: {e}")
     
+    # Default season to 1 if not specified
+    if season is None:
+        season = 1
+    
     print(f"Found {len(video_files)} video files. Starting ingestion...")
+    if season:
+        print(f"Using Season {season:02d} for episodes without explicit season number.")
     print("=" * 60)
     
     successful = 0
     failed = 0
     skipped = 0
     
-    for idx, video_file in enumerate(sorted(video_files), 1):
+    for idx, video_file in enumerate(video_files, 1):
         filename = video_file.stem  # filename without extension
         
         print(f"\n[{idx}/{len(video_files)}] Processing: {os.path.basename(video_file)}")
         
-        # Look for pattern like S##E## in filename
-        match_sxe = re.search(r'[Ss](\d+)[Ee](\d+)', filename)
+        # Extract season and episode numbers
+        season_num, episode_num = extract_episode_number(filename)
         
-        # Look for "Episode X" pattern
-        match_ep = re.search(r'Episode\s+(\d+)', filename, re.IGNORECASE)
-        
-        if match_sxe:
-            season = match_sxe.group(1).zfill(2)
-            episode = match_sxe.group(2).zfill(2)
-            episode_id = f"S{season}E{episode}"
-        elif match_ep:
-            # Assume Season 1 if just "Episode X" is found (since user said Season 1)
-            # Or we could ask, but for now defaulting to S01
-            episode_num = match_ep.group(1).zfill(2)
-            episode_id = f"S01E{episode_num}"
+        if season_num is not None and episode_num is not None:
+            # Full S##E## pattern found
+            episode_id = f"S{season_num:02d}E{episode_num:02d}"
+        elif episode_num is not None:
+            # Only episode number found, use provided/default season
+            episode_id = f"S{season:02d}E{episode_num:02d}"
         else:
-            # Use filename as episode_id if pattern not found
+            # No pattern found - use filename
             episode_id = filename
-            print(f"  Warning: Could not extract episode ID from {filename}, using '{episode_id}'")
+            print(f"  Warning: Could not extract episode number from '{filename}'")
+            print(f"  Using filename as episode ID: '{episode_id}'")
+            print(f"  Consider renaming file to include episode number (e.g., 'Episode 1.mp4')")
         
         # Skip if already ingested
         if skip_existing and episode_id in already_ingested:
@@ -169,18 +223,47 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage:")
         print("  Single file: python ingest_episodes.py <file> <episode_id>")
-        print("  Directory:   python ingest_episodes.py <directory>")
+        print("  Directory:   python ingest_episodes.py <directory> [season_number]")
+        print("  Multiple:    python ingest_episodes.py <dir1> <season1> <dir2> <season2> ...")
         print()
         print("Examples:")
         print('  python ingest_episodes.py "S01E01.mp4" "S01E01"')
         print('  python ingest_episodes.py "/path/to/episodes/"')
+        print('  python ingest_episodes.py "/path/to/episodes/" 2  # Specify Season 2')
+        print('  python ingest_episodes.py "/path/s1/" 1 "/path/s2/" 2  # Multiple seasons')
         sys.exit(1)
     
+    # Check if we have multiple directory/season pairs
+    args = sys.argv[1:]
+    if len(args) >= 4 and all(os.path.isdir(args[i]) for i in range(0, len(args), 2) if i < len(args)):
+        # Multiple directories: process each pair
+        print("=" * 60)
+        print("Processing Multiple Seasons")
+        print("=" * 60)
+        for i in range(0, len(args), 2):
+            if i + 1 < len(args):
+                path = args[i]
+                try:
+                    season = int(args[i + 1])
+                    print(f"\n[{i//2 + 1}] Processing Season {season}: {path}")
+                    ingest_directory(path, season=season)
+                except ValueError:
+                    print(f"Warning: Invalid season number '{args[i + 1]}', skipping")
+        sys.exit(0)
+    
+    # Single file or directory
     path = sys.argv[1]
+    season = None
     
     if os.path.isdir(path):
         # Ingest all files in directory
-        ingest_directory(path)
+        if len(sys.argv) >= 3:
+            try:
+                season = int(sys.argv[2])
+                print(f"Using Season {season:02d} for episodes without explicit season number.")
+            except ValueError:
+                print(f"Warning: Invalid season number '{sys.argv[2]}', using default Season 1")
+        ingest_directory(path, season=season)
     elif os.path.isfile(path):
         # Ingest single file
         if len(sys.argv) < 3:
