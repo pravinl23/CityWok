@@ -127,8 +127,19 @@ async def identify_episode(
         # Search top 5 matches for each frame
         print("Searching vector database...")
         try:
+            # Limit to reasonable number of frames to search
+            max_frames_to_search = 30
+            if len(embeddings) > max_frames_to_search:
+                print(f"Limiting search to first {max_frames_to_search} frames (had {len(embeddings)})")
+                embeddings = embeddings[:max_frames_to_search]
+                timestamps = timestamps[:max_frames_to_search]
+            
             search_results = vector_db.search(embeddings, k=5)
             print(f"Found {len(search_results)} search result sets")
+            
+            if not search_results or len(search_results) == 0:
+                return {"match_found": False, "message": "No search results returned from database"}
+                
         except Exception as e:
             print(f"Error searching database: {e}")
             import traceback

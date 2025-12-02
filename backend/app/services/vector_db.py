@@ -60,22 +60,50 @@ class VectorDB:
         Returns a list of results per query vector.
         Each result is a list of (score, metadata).
         """
-        if self.index.ntotal == 0:
-            return [[] for _ in range(len(query_embeddings))]
+        try:
+            if self.index is None:
+                print("Warning: Vector index is None")
+                return [[] for _ in range(len(query_embeddings))]
+                
+            if self.index.ntotal == 0:
+                print("Warning: Vector index is empty")
+                return [[] for _ in range(len(query_embeddings))]
             
-        distances, indices = self.index.search(query_embeddings, k)
-        
-        results = []
-        for i in range(len(query_embeddings)):
-            query_results = []
-            for j in range(k):
-                idx = indices[i][j]
-                score = distances[i][j]
-                if idx != -1 and idx in self.metadata:
-                    query_results.append((float(score), self.metadata[idx]))
-            results.append(query_results)
-        
-        return results
+            if len(query_embeddings) == 0:
+                return []
+            
+            print(f"Searching {len(query_embeddings)} queries in index with {self.index.ntotal} vectors...")
+            
+            # Ensure embeddings are normalized for cosine similarity
+            if query_embeddings.ndim == 1:
+                query_embeddings = query_embeddings.reshape(1, -1)
+            
+            # Normalize query embeddings
+            norms = np.linalg.norm(query_embeddings, axis=1, keepdims=True)
+            norms[norms == 0] = 1  # Avoid division by zero
+            query_embeddings = query_embeddings / norms
+            
+            distances, indices = self.index.search(query_embeddings, min(k, self.index.ntotal))
+            
+            results = []
+            for i in range(len(query_embeddings)):
+                query_results = []
+                for j in range(len(indices[i])):
+                    idx = int(indices[i][j])
+                    score = float(distances[i][j])
+                    if idx != -1 and idx in self.metadata:
+                        query_results.append((score, self.metadata[idx]))
+                results.append(query_results)
+            
+            print(f"Search completed, returning {len(results)} result sets")
+            return results
+            
+        except Exception as e:
+            print(f"Error in vector search: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return empty results instead of crashing
+            return [[] for _ in range(len(query_embeddings))]
 
     def save_index(self):
         # Ensure data directory exists
