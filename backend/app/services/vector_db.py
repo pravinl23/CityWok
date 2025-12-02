@@ -28,6 +28,7 @@ class VectorDB:
             else:
                 print("Creating new vector index...")
                 # using Inner Product (IP) for cosine similarity on normalized vectors
+                # IndexFlatIP is fast for <1M vectors. For larger scale, consider IndexHNSW
                 self.index = faiss.IndexFlatIP(self.dimension)
                 self.metadata = {}
         except Exception as e:
