@@ -107,7 +107,19 @@ class VideoProcessor:
             
         # Normalize embeddings
         image_features = image_features / image_features.norm(p=2, dim=-1, keepdim=True)
-        return image_features.cpu().numpy()
+        # Convert to numpy and ensure float32
+        embeddings = image_features.cpu().numpy().astype(np.float32)
+        
+        # Safety check: ensure no NaN or Inf values
+        if np.any(np.isnan(embeddings)) or np.any(np.isinf(embeddings)):
+            print("Warning: Found NaN or Inf in embeddings, replacing with zeros")
+            embeddings = np.nan_to_num(embeddings, nan=0.0, posinf=0.0, neginf=0.0)
+            # Renormalize after cleaning
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            embeddings = embeddings / norms
+        
+        return embeddings
 
 # Global instance
 video_processor = VideoProcessor()

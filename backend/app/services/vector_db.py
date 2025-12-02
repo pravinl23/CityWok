@@ -92,31 +92,50 @@ class VectorDB:
                 print(f"Error normalizing embeddings: {e}")
                 return [[] for _ in range(len(query_embeddings))]
             
-            # Search in smaller batches to avoid memory issues
-            batch_size = 10
+            # Search one query at a time to avoid any memory/crash issues
             all_results = []
             
-            for i in range(0, len(query_embeddings), batch_size):
-                batch = query_embeddings[i:i+batch_size]
+            for i in range(len(query_embeddings)):
                 try:
-                    print(f"Searching batch {i//batch_size + 1} ({len(batch)} queries)...")
-                    distances, indices = self.index.search(batch.astype(np.float32), min(k, self.index.ntotal))
+                    # Get single query
+                    single_query = query_embeddings[i:i+1].copy()
+                    single_query = np.ascontiguousarray(single_query.astype(np.float32))
                     
-                    for j in range(len(batch)):
-                        query_results = []
-                        for m in range(len(indices[j])):
-                            idx = int(indices[j][m])
-                            score = float(distances[j][m])
-                            if idx != -1 and idx in self.metadata:
+                    # Validate
+                    if np.any(np.isnan(single_query)) or np.any(np.isinf(single_query)):
+                        print(f"Warning: Query {i} has NaN/Inf, skipping")
+                        all_results.append([])
+                        continue
+                    
+                    # Search with just 1 query
+                    search_k = min(k, self.index.ntotal)
+                    if search_k <= 0:
+                        all_results.append([])
+                        continue
+                    
+                    distances, indices = self.index.search(single_query, search_k)
+                    
+                    # Process results for this single query
+                    query_results = []
+                    for m in range(len(indices[0])):
+                        try:
+                            idx = int(indices[0][m])
+                            score = float(distances[0][m])
+                            if idx != -1 and idx >= 0 and idx in self.metadata:
                                 query_results.append((score, self.metadata[idx]))
-                        all_results.append(query_results)
+                        except (ValueError, KeyError, IndexError) as e:
+                            continue
+                    
+                    all_results.append(query_results)
+                    
+                    if (i + 1) % 5 == 0:
+                        print(f"Processed {i + 1}/{len(query_embeddings)} queries...")
                         
                 except Exception as e:
-                    print(f"Error searching batch {i//batch_size + 1}: {e}")
+                    print(f"Error searching query {i}: {e}")
                     import traceback
                     traceback.print_exc()
-                    # Add empty results for this batch
-                    all_results.extend([[] for _ in range(len(batch))])
+                    all_results.append([])
             
             print(f"Search completed, returning {len(all_results)} result sets")
             return all_results

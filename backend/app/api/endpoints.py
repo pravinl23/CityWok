@@ -118,6 +118,16 @@ async def identify_episode(
         try:
             embeddings = video_processor.compute_embeddings(list(images))
             print(f"Computed {len(embeddings)} embeddings")
+            
+            # Validate embeddings
+            if len(embeddings) == 0:
+                return {"match_found": False, "message": "No embeddings computed"}
+            
+            if embeddings.shape[0] != len(images):
+                print(f"Warning: Embedding count {embeddings.shape[0]} doesn't match image count {len(images)}")
+                
+            print(f"Embeddings shape: {embeddings.shape}, dtype: {embeddings.dtype}")
+            
         except Exception as e:
             print(f"Error computing embeddings: {e}")
             import traceback
@@ -129,17 +139,27 @@ async def identify_episode(
         print("Searching vector database...")
         try:
             # Limit to reasonable number of frames to search
-            max_frames_to_search = 20  # Reduced further to prevent crashes
+            max_frames_to_search = 15  # Small but reasonable number
             if len(embeddings) > max_frames_to_search:
                 print(f"Limiting search to first {max_frames_to_search} frames (had {len(embeddings)})")
-                embeddings = embeddings[:max_frames_to_search]
+                embeddings = embeddings[:max_frames_to_search].copy()
                 timestamps = timestamps[:max_frames_to_search]
             
-            # Ensure embeddings are float32 for FAISS
+            # Ensure embeddings are float32 for FAISS and properly shaped
             if embeddings.dtype != np.float32:
                 embeddings = embeddings.astype(np.float32)
             
+            # Ensure 2D array
+            if embeddings.ndim == 1:
+                embeddings = embeddings.reshape(1, -1)
+            
             print(f"Searching with embeddings shape: {embeddings.shape}, dtype: {embeddings.dtype}")
+            
+            # Final validation before search
+            if np.any(np.isnan(embeddings)) or np.any(np.isinf(embeddings)):
+                print("Error: Embeddings contain NaN or Inf values")
+                return {"match_found": False, "message": "Invalid embeddings computed"}
+            
             search_results = vector_db.search(embeddings, k=5)
             print(f"Found {len(search_results)} search result sets")
             
