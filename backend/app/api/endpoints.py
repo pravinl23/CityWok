@@ -21,7 +21,15 @@ router = APIRouter()
 
 def cleanup_file(path: str):
     if os.path.exists(path):
-        os.remove(path)
+        try:
+            os.remove(path)
+        except Exception as e:
+            print(f"Warning: Could not delete temp file {path}: {e}")
+
+@router.get("/test")
+async def test_endpoint():
+    """Simple test endpoint to verify API is working."""
+    return {"status": "ok", "message": "API is working"}
 
 @router.post("/identify")
 async def identify_episode(
@@ -31,10 +39,19 @@ async def identify_episode(
     """
     Identify the episode from a video clip.
     """
-    # Check file extension (case-insensitive)
-    filename_lower = file.filename.lower() if file.filename else ""
-    if not filename_lower.endswith(('.mp4', '.mov', '.avi', '.mpeg', '.mpg')):
-        raise HTTPException(status_code=400, detail="Invalid file format. Please upload a video file.")
+    try:
+        # Check file extension (case-insensitive)
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+            
+        filename_lower = file.filename.lower()
+        if not filename_lower.endswith(('.mp4', '.mov', '.avi', '.mpeg', '.mpg')):
+            raise HTTPException(status_code=400, detail="Invalid file format. Please upload a video file.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error checking file: {e}")
+        raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
         
     # Save temp file
     file_id = str(uuid.uuid4())

@@ -16,16 +16,26 @@ class VectorDB:
         self.load_or_create_index()
 
     def load_or_create_index(self):
-        if os.path.exists(self.index_path) and os.path.exists(self.metadata_path):
-            print("Loading existing vector index and metadata...")
-            self.index = faiss.read_index(self.index_path)
-            with open(self.metadata_path, 'r') as f:
-                # Convert string keys back to int
-                data = json.load(f)
-                self.metadata = {int(k): v for k, v in data.items()}
-        else:
-            print("Creating new vector index...")
-            # using Inner Product (IP) for cosine similarity on normalized vectors
+        try:
+            if os.path.exists(self.index_path) and os.path.exists(self.metadata_path):
+                print("Loading existing vector index and metadata...")
+                self.index = faiss.read_index(self.index_path)
+                with open(self.metadata_path, 'r') as f:
+                    # Convert string keys back to int
+                    data = json.load(f)
+                    self.metadata = {int(k): v for k, v in data.items()}
+                print(f"Loaded {self.index.ntotal} vectors from database")
+            else:
+                print("Creating new vector index...")
+                # using Inner Product (IP) for cosine similarity on normalized vectors
+                self.index = faiss.IndexFlatIP(self.dimension)
+                self.metadata = {}
+        except Exception as e:
+            print(f"Error loading vector database: {e}")
+            import traceback
+            traceback.print_exc()
+            # Create new index if loading fails
+            print("Creating new vector index due to load error...")
             self.index = faiss.IndexFlatIP(self.dimension)
             self.metadata = {}
 

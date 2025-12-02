@@ -32,6 +32,7 @@ async def root():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler to catch and log all errors."""
+    import traceback
     print(f"Unhandled exception: {exc}")
     print(traceback.format_exc())
     return JSONResponse(
