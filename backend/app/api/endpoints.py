@@ -207,23 +207,36 @@ async def identify_episode(
     elif best_audio_match:
         final_match = best_audio_match
         
-    if final_match:
-        # Format timestamp
-        seconds = final_match['estimated_timestamp']
-        m, s = divmod(seconds, 60)
-        h, m = divmod(m, 60)
-        time_str = "%d:%02d:%02d" % (h, m, s)
-        
-        return {
-            "match_found": True,
-            "episode": final_match['episode_id'],
-            "timestamp": time_str,
-            "details": final_match
-        }
-    else:
+    try:
+        if final_match:
+            # Format timestamp
+            seconds = final_match['estimated_timestamp']
+            m, s = divmod(int(seconds), 60)
+            h, m = divmod(m, 60)
+            time_str = "%d:%02d:%02d" % (h, m, s)
+            
+            result = {
+                "match_found": True,
+                "episode": final_match['episode_id'],
+                "timestamp": time_str,
+                "details": final_match
+            }
+            print(f"Returning match result: {result}")
+            return result
+        else:
+            result = {
+                "match_found": False,
+                "message": "Could not identify episode."
+            }
+            print(f"Returning no match result: {result}")
+            return result
+    except Exception as e:
+        print(f"Error formatting response: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "match_found": False,
-            "message": "Could not identify episode."
+            "message": f"Error processing result: {str(e)}"
         }
 
 @router.post("/ingest")
