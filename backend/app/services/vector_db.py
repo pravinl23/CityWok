@@ -78,25 +78,48 @@ class VectorDB:
             if query_embeddings.ndim == 1:
                 query_embeddings = query_embeddings.reshape(1, -1)
             
+            # Check embedding dimensions match
+            if query_embeddings.shape[1] != self.dimension:
+                print(f"Error: Query embedding dimension {query_embeddings.shape[1]} doesn't match index dimension {self.dimension}")
+                return [[] for _ in range(len(query_embeddings))]
+            
             # Normalize query embeddings
-            norms = np.linalg.norm(query_embeddings, axis=1, keepdims=True)
-            norms[norms == 0] = 1  # Avoid division by zero
-            query_embeddings = query_embeddings / norms
+            try:
+                norms = np.linalg.norm(query_embeddings, axis=1, keepdims=True)
+                norms[norms == 0] = 1  # Avoid division by zero
+                query_embeddings = query_embeddings / norms
+            except Exception as e:
+                print(f"Error normalizing embeddings: {e}")
+                return [[] for _ in range(len(query_embeddings))]
             
-            distances, indices = self.index.search(query_embeddings, min(k, self.index.ntotal))
+            # Search in smaller batches to avoid memory issues
+            batch_size = 10
+            all_results = []
             
-            results = []
-            for i in range(len(query_embeddings)):
-                query_results = []
-                for j in range(len(indices[i])):
-                    idx = int(indices[i][j])
-                    score = float(distances[i][j])
-                    if idx != -1 and idx in self.metadata:
-                        query_results.append((score, self.metadata[idx]))
-                results.append(query_results)
+            for i in range(0, len(query_embeddings), batch_size):
+                batch = query_embeddings[i:i+batch_size]
+                try:
+                    print(f"Searching batch {i//batch_size + 1} ({len(batch)} queries)...")
+                    distances, indices = self.index.search(batch.astype(np.float32), min(k, self.index.ntotal))
+                    
+                    for j in range(len(batch)):
+                        query_results = []
+                        for m in range(len(indices[j])):
+                            idx = int(indices[j][m])
+                            score = float(distances[j][m])
+                            if idx != -1 and idx in self.metadata:
+                                query_results.append((score, self.metadata[idx]))
+                        all_results.append(query_results)
+                        
+                except Exception as e:
+                    print(f"Error searching batch {i//batch_size + 1}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Add empty results for this batch
+                    all_results.extend([[] for _ in range(len(batch))])
             
-            print(f"Search completed, returning {len(results)} result sets")
-            return results
+            print(f"Search completed, returning {len(all_results)} result sets")
+            return all_results
             
         except Exception as e:
             print(f"Error in vector search: {e}")

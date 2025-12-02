@@ -128,12 +128,17 @@ async def identify_episode(
         print("Searching vector database...")
         try:
             # Limit to reasonable number of frames to search
-            max_frames_to_search = 30
+            max_frames_to_search = 20  # Reduced further to prevent crashes
             if len(embeddings) > max_frames_to_search:
                 print(f"Limiting search to first {max_frames_to_search} frames (had {len(embeddings)})")
                 embeddings = embeddings[:max_frames_to_search]
                 timestamps = timestamps[:max_frames_to_search]
             
+            # Ensure embeddings are float32 for FAISS
+            if embeddings.dtype != np.float32:
+                embeddings = embeddings.astype(np.float32)
+            
+            print(f"Searching with embeddings shape: {embeddings.shape}, dtype: {embeddings.dtype}")
             search_results = vector_db.search(embeddings, k=5)
             print(f"Found {len(search_results)} search result sets")
             
