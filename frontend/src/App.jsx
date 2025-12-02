@@ -1,19 +1,49 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import axios from 'axios'
 import './App.css'
+import cartmanImage from './assets/cartman.png'
+import backgroundImage from './assets/background.jpg'
 
 function App() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
-  const [mode, setMode] = useState('identify') // 'identify' or 'ingest'
-  const [episodeId, setEpisodeId] = useState('')
+  const [url, setUrl] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const fileInputRef = useRef(null)
 
-  const handleFileChange = (e) => {
-    setFile(e.target.files[0])
-    setResult(null)
-    setError(null)
+  const handleFileChange = (selectedFile) => {
+    if (selectedFile) {
+      setFile(selectedFile)
+      setResult(null)
+      setError(null)
+    }
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const droppedFile = e.dataTransfer.files[0]
+    if (droppedFile) {
+      handleFileChange(droppedFile)
+    }
+  }
+
+  const handleFileInputChange = (e) => {
+    if (e.target.files[0]) {
+      handleFileChange(e.target.files[0])
+    }
   }
 
   const handleIdentify = async () => {
@@ -31,7 +61,7 @@ function App() {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
-        timeout: 300000  // 5 minute timeout for processing
+        timeout: 300000
       })
       setResult(response.data)
     } catch (err) {
@@ -42,115 +72,107 @@ function App() {
     }
   }
 
-  const handleIngest = async () => {
-    if (!file || !episodeId) {
-      setError("Please select a file and enter an Episode ID")
+  const handleUrlSubmit = async () => {
+    if (!url.trim()) {
+      setError("Please enter a URL")
       return
     }
-
-    setLoading(true)
-    setError(null)
-    
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    try {
-      // Append episode_id to query params
-      const response = await axios.post(`http://localhost:8000/api/v1/ingest?episode_id=${episodeId}`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      })
-      setResult({ message: response.data.message })
-    } catch (err) {
-      console.error(err)
-      setError("An error occurred during ingestion.")
-    } finally {
-      setLoading(false)
-    }
+    setError("URL support coming soon!")
   }
 
   return (
-    <div className="container">
-      <header>
-        <h1>CityWok Episode Identifier</h1>
-        <p>Find which South Park episode your clip is from.</p>
-      </header>
-
-      <div className="controls">
-        <button 
-          onClick={() => setMode('identify')} 
-          className={mode === 'identify' ? 'active' : ''}
-        >
-          Identify Clip
-        </button>
-        <button 
-          onClick={() => setMode('ingest')} 
-          className={mode === 'ingest' ? 'active' : ''}
-        >
-          Admin: Ingest Episode
-        </button>
+    <div className="app-container">
+      <div className="background" style={{ backgroundImage: `url(${backgroundImage})` }}>
       </div>
 
-      <main className="card">
-        <div className="upload-section">
-          <input 
-            type="file" 
-            accept="video/*" 
-            onChange={handleFileChange} 
-          />
-          
-          {mode === 'ingest' && (
-            <input 
-              type="text" 
-              placeholder="Episode ID (e.g., S01E01)" 
-              value={episodeId}
-              onChange={(e) => setEpisodeId(e.target.value)}
-              style={{marginTop: '10px', display: 'block'}}
-            />
-          )}
-
-          <button 
-            onClick={mode === 'identify' ? handleIdentify : handleIngest} 
-            disabled={!file || loading}
-            className="action-btn"
-          >
-            {loading ? 'Processing...' : (mode === 'identify' ? 'Identify Episode' : 'Ingest Episode')}
-          </button>
+      <div className="content">
+        <div className="left-side">
+          <div className="banners">
+            <div className="banner banner-top">FIND THE</div>
+            <div className="banner banner-bottom">EPISODE, M'KAY?</div>
+          </div>
+          <div className="cartman">
+            <img src={cartmanImage} alt="Cartman" className="cartman-image" />
+          </div>
         </div>
 
-        {error && <div className="error">{error}</div>}
+        <div className="right-side">
+          <div className={`upload-card ${isDragging ? 'dragging' : ''}`}>
+            <div 
+              className="drop-zone"
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <div className="upload-icon">↑</div>
+              <p className="upload-text">Drag & Drop Media</p>
+              <p className="upload-formats">(MP4, MP3, PNG, JPG)</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*,audio/*,image/*"
+                onChange={handleFileInputChange}
+                style={{ display: 'none' }}
+              />
+              {file && (
+                <p className="file-name">{file.name}</p>
+              )}
+            </div>
 
-        {result && (
-          <div className="result">
-            {mode === 'identify' ? (
-              <>
+            <button 
+              className="upload-btn"
+              onClick={handleIdentify}
+              disabled={!file || loading}
+            >
+              {loading ? 'PROCESSING...' : 'UPLOAD FILE'}
+            </button>
+
+            <p className="or-text">OR PASTE URL</p>
+            
+            <div className="url-section">
+              <input
+                type="text"
+                placeholder="https://tiktok.com/..."
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                className="url-input"
+              />
+              <button 
+                className="find-btn"
+                onClick={handleUrlSubmit}
+                disabled={!url.trim()}
+              >
+                FIND IT
+              </button>
+            </div>
+
+            {error && <div className="error-message">{error}</div>}
+
+            {result && (
+              <div className="result-card">
                 {result.match_found ? (
-                  <div className="success-match">
-                    <h3>Match Found!</h3>
-                    <p className="episode-title">Episode: {result.episode}</p>
-                    <p className="timestamp">Time: {result.timestamp}</p>
-                    <div className="details">
-                      <small>Confidence: {result.details.confidence}</small>
+                  <>
+                    <h3 className="result-title">Match Found!</h3>
+                    <p className="result-episode">Episode: {result.episode}</p>
+                    <p className="result-timestamp">Time: {result.timestamp}</p>
+                    <div className="result-details">
+                      <small>Confidence: {result.details?.confidence}</small>
                       <br/>
-                      <small>Method: {result.details.method}</small>
+                      <small>Method: {result.details?.method}</small>
                     </div>
-                  </div>
+                  </>
                 ) : (
                   <div className="no-match">
                     <h3>No Match Found</h3>
-                    <p>We couldn't identify this clip with high confidence.</p>
+                    <p>{result.message}</p>
                   </div>
                 )}
-              </>
-            ) : (
-              <div className="success-match">
-                <p>{result.message}</p>
               </div>
             )}
           </div>
-        )}
-      </main>
+        </div>
+      </div>
     </div>
   )
 }

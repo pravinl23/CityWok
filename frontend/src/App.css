@@ -1,135 +1,289 @@
-#root {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.container {
+.app-container {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', cursive, sans-serif;
+}
+
+/* Background - South Park Winter Scene */
+.background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+}
+
+/* Main Content Layout */
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 5%;
+}
+
+/* Left Side - Cartman and Banners */
+.left-side {
+  position: relative;
+  flex: 1;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  justify-content: center;
+  align-items: flex-start;
+  padding-left: 5%;
 }
 
-header h1 {
-  color: #000000;
-  margin-bottom: 0.5rem;
+.banners {
+  position: relative;
+  z-index: 3;
+  margin-bottom: 20px;
 }
 
-header p {
-  color: #000000;
+.banner {
+  background: #FFF;
+  border: 3px solid #000;
+  padding: 15px 30px;
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #000;
+  margin: 10px 0;
+  transform: rotate(-2deg);
+  box-shadow: 4px 4px 0 #000;
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px));
 }
 
-.controls {
+.banner-bottom {
+  transform: rotate(2deg);
+  margin-left: 30px;
+}
+
+/* Cartman Character */
+.cartman {
+  position: relative;
+  z-index: 2;
+  width: 400px;
+  height: 500px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cartman-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+/* Right Side - Upload Card */
+.right-side {
+  flex: 1;
   display: flex;
   justify-content: center;
-  gap: 1rem;
-}
-
-.controls button {
-  background: transparent;
-  border: 1px solid #000000;
-  color: #000000;
-  cursor: pointer;
-}
-
-.controls button.active {
-  background: #000000;
-  color: white;
-  border-color: #000000;
-}
-
-.card {
-  background: #ffffff;
-  padding: 2rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-  border: 1px solid #000000;
-}
-
-.upload-section {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 1rem;
+  padding-right: 5%;
 }
 
-input[type="file"] {
-  padding: 1rem;
-  border: 2px dashed #000000;
-  border-radius: 4px;
+.upload-card {
+  background: #FFF;
+  border: 4px solid #000;
+  border-radius: 20px;
+  padding: 40px;
   width: 100%;
-  box-sizing: border-box;
+  max-width: 450px;
+  box-shadow: 8px 8px 0 #000;
 }
 
-input[type="text"] {
-  padding: 0.8rem;
-  border: 1px solid #000000;
-  border-radius: 4px;
-  width: 100%;
-  box-sizing: border-box;
-  color: #000000;
-  background: #ffffff;
+.upload-card.dragging {
+  border-color: #FF6B35;
+  background: #FFF5F0;
 }
 
-.action-btn {
-  background: #000000;
-  color: white;
-  padding: 0.8rem 2rem;
-  font-size: 1.1rem;
-  border: none;
-  border-radius: 4px;
+.drop-zone {
+  text-align: center;
+  padding: 40px 20px;
+  border: 3px dashed #CCC;
+  border-radius: 15px;
   cursor: pointer;
-  transition: background 0.3s;
+  transition: all 0.3s;
+  margin-bottom: 20px;
 }
 
-.action-btn:disabled {
-  background: #999999;
-  cursor: not-allowed;
+.drop-zone:hover {
+  border-color: #FF6B35;
+  background: #FFF5F0;
 }
 
-.action-btn:hover:not(:disabled) {
-  background: #333333;
+.upload-icon {
+  font-size: 3rem;
+  color: #FF6B35;
+  margin-bottom: 15px;
 }
 
-.result {
-  margin-top: 2rem;
-  padding: 1rem;
-  border-top: 1px solid #000000;
+.upload-text {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: #000;
+  margin-bottom: 5px;
 }
 
-.success-match {
-  background: #f5f5f5;
-  padding: 1rem;
-  border-radius: 4px;
-  color: #000000;
-  border: 1px solid #000000;
+.upload-formats {
+  font-size: 0.9rem;
+  color: #666;
+  margin-bottom: 10px;
 }
 
-.episode-title {
-  font-size: 1.5rem;
+.file-name {
+  font-size: 0.9rem;
+  color: #FF6B35;
+  margin-top: 10px;
   font-weight: bold;
 }
 
-.timestamp {
+.upload-btn {
+  width: 100%;
+  background: #FF6B35;
+  color: #FFF;
+  border: 3px solid #000;
+  padding: 15px;
   font-size: 1.2rem;
-  color: #000000;
+  font-weight: bold;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-bottom: 20px;
+  font-family: inherit;
 }
 
-.error {
-  color: #000000;
-  margin-top: 1rem;
-  background: #f5f5f5;
-  padding: 0.5rem;
-  border-radius: 4px;
-  border: 1px solid #000000;
+.upload-btn:hover:not(:disabled) {
+  background: #FF4500;
+  transform: translateY(-2px);
+  box-shadow: 4px 4px 0 #000;
+}
+
+.upload-btn:disabled {
+  background: #CCC;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.or-text {
+  text-align: center;
+  font-size: 1rem;
+  color: #666;
+  margin-bottom: 15px;
+  font-weight: bold;
+}
+
+.url-section {
+  display: flex;
+  gap: 10px;
+}
+
+.url-input {
+  flex: 1;
+  padding: 12px;
+  border: 3px solid #000;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.url-input:focus {
+  outline: none;
+  border-color: #FF6B35;
+}
+
+.find-btn {
+  background: #32CD32;
+  color: #FFF;
+  border: 3px solid #000;
+  padding: 12px 25px;
+  font-size: 1rem;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+  font-family: inherit;
+}
+
+.find-btn:hover:not(:disabled) {
+  background: #228B22;
+  transform: translateY(-2px);
+  box-shadow: 4px 4px 0 #000;
+}
+
+.find-btn:disabled {
+  background: #CCC;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.error-message {
+  margin-top: 20px;
+  padding: 15px;
+  background: #FFE5E5;
+  border: 3px solid #FF0000;
+  border-radius: 8px;
+  color: #CC0000;
+  font-weight: bold;
+}
+
+.result-card {
+  margin-top: 20px;
+  padding: 20px;
+  background: #F0F8FF;
+  border: 3px solid #000;
+  border-radius: 10px;
+}
+
+.result-title {
+  font-size: 1.5rem;
+  color: #000;
+  margin-bottom: 10px;
+}
+
+.result-episode {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: #000;
+  margin: 10px 0;
+}
+
+.result-timestamp {
+  font-size: 1.2rem;
+  color: #000;
+  margin: 10px 0;
+}
+
+.result-details {
+  margin-top: 10px;
+  color: #666;
+  font-size: 0.9rem;
 }
 
 .no-match {
-  background: #f5f5f5;
-  padding: 1rem;
-  border-radius: 4px;
-  color: #000000;
-  border: 1px solid #000000;
+  text-align: center;
+  color: #000;
+}
+
+.no-match h3 {
+  margin-bottom: 10px;
 }
