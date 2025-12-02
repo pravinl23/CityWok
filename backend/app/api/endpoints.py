@@ -44,6 +44,21 @@ async def identify_episode(
     try:
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+        
+        # Get file size after saving
+        file_size = os.path.getsize(temp_path)
+        
+        # Check file size (max 100MB)
+        if file_size > 100 * 1024 * 1024:
+            os.remove(temp_path)
+            raise HTTPException(status_code=400, detail="File too large. Maximum size is 100MB.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error saving file: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
     finally:
         file.file.close()
         
