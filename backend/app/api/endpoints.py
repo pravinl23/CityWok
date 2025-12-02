@@ -51,6 +51,7 @@ async def identify_episode(
     background_tasks.add_task(cleanup_file, temp_path)
     
     # 1. Video Analysis
+    best_visual_match = None
     try:
         print(f"Processing file: {file.filename} ({file_size / (1024*1024):.1f} MB)")
         # Extract frames
@@ -60,18 +61,33 @@ async def identify_episode(
              return {"match_found": False, "message": "No frames extracted from video"}
         
         print(f"Extracted {len(frames_data)} frames")
+        if len(frames_data) == 0:
+            return {"match_found": False, "message": "No frames extracted from video"}
+            
         timestamps, images = zip(*frames_data)
         
         # Compute embeddings
         print("Computing embeddings...")
-        embeddings = video_processor.compute_embeddings(list(images))
-        print(f"Computed {len(embeddings)} embeddings")
+        try:
+            embeddings = video_processor.compute_embeddings(list(images))
+            print(f"Computed {len(embeddings)} embeddings")
+        except Exception as e:
+            print(f"Error computing embeddings: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"match_found": False, "message": f"Error processing video: {str(e)}"}
         
         # Search in Vector DB
         # Search top 5 matches for each frame
         print("Searching vector database...")
-        search_results = vector_db.search(embeddings, k=5)
-        print(f"Found {len(search_results)} search result sets")
+        try:
+            search_results = vector_db.search(embeddings, k=5)
+            print(f"Found {len(search_results)} search result sets")
+        except Exception as e:
+            print(f"Error searching database: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"match_found": False, "message": f"Error searching database: {str(e)}"}
         
         # Aggregate results (Voting)
         episode_votes = Counter()
