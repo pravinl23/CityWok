@@ -47,8 +47,8 @@ class VideoProcessor:
             interval = int(fps / sampling_rate) if sampling_rate < fps else 1
             
             frame_count = 0
-            max_frames = 50  # Limit to prevent memory issues (reduced from 100)
-            max_iterations = 10000  # Safety limit to prevent infinite loops
+            max_frames = 1000  # Allow enough frames for full episode processing (~700-800 for 22min episodes at 0.5fps)
+            max_iterations = 50000  # Safety limit to prevent infinite loops
             
             while len(frames) < max_frames and frame_count < max_iterations:
                 ret, frame = cap.read()

@@ -257,31 +257,45 @@ async def identify_episode(
         traceback.print_exc()
         best_visual_match = None
 
-    # 2. Audio Analysis (Fallback or Confirmation)
+    # 2. Audio Analysis (Disabled - too inaccurate with current simple implementation)
+    # TODO: Re-enable when using a proper audio fingerprinting library (e.g., dejavu, chromaprint)
     best_audio_match = None
-    if AUDIO_AVAILABLE and audio_matcher:
-        try:
-            audio_result = audio_matcher.match_clip(temp_path)
-            if audio_result:
-                best_audio_match = {
-                    "episode_id": audio_result['episode_id'],
-                    "estimated_timestamp": max(0, audio_result['timestamp']),
-                    "confidence": audio_result['confidence'],
-                    "method": "audio"
-                }
-        except Exception as e:
-            print(f"Audio analysis failed: {e}")
+    # Temporarily disabled due to high false positive rate
+    # if AUDIO_AVAILABLE and audio_matcher:
+    #     try:
+    #         audio_result = audio_matcher.match_clip(temp_path)
+    #         if audio_result:
+    #             best_audio_match = {
+    #                 "episode_id": audio_result['episode_id'],
+    #                 "estimated_timestamp": max(0, audio_result['timestamp']),
+    #                 "confidence": audio_result['confidence'],
+    #                 "method": "audio"
+    #             }
+    #     except Exception as e:
+    #         print(f"Audio analysis failed: {e}")
         
     # Final Decision Logic
+    # Prefer visual matching as it's more reliable for this use case
     final_match = None
     if best_visual_match and best_audio_match:
         if best_visual_match['episode_id'] == best_audio_match['episode_id']:
+            # Both agree - use visual with combined confidence
             final_match = best_visual_match
             final_match['confidence'] = "High (Audio+Video)"
         else:
-            # Conflict: Prefer audio for exactness if confidence is high, else video
-            # For now, return both or prefer video if votes are high
-            final_match = best_audio_match # Prefer audio for now as it's usually exact
+            # Conflict: Prefer visual matching (more reliable for video clips)
+            # Only use audio if visual has very low confidence
+            visual_confidence = best_visual_match.get('confidence', 0)
+            audio_confidence = best_audio_match.get('confidence', 0)
+            
+            if visual_confidence < 5 and audio_confidence > 80:
+                # Visual is very uncertain, audio is very confident - use audio
+                print(f"Using audio match due to low visual confidence ({visual_confidence} vs audio {audio_confidence})")
+                final_match = best_audio_match
+            else:
+                # Prefer visual matching (default)
+                print(f"Conflict: Visual={best_visual_match['episode_id']} (conf={visual_confidence}), Audio={best_audio_match['episode_id']} (conf={audio_confidence}). Preferring visual.")
+                final_match = best_visual_match
     elif best_visual_match:
         final_match = best_visual_match
     elif best_audio_match:
