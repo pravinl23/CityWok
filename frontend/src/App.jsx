@@ -30,7 +30,8 @@ function App() {
       const response = await axios.post('http://localhost:8000/api/v1/identify', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
-        }
+        },
+        timeout: 300000  // 5 minute timeout for processing
       })
       setResult(response.data)
     } catch (err) {
