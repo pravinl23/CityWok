@@ -172,15 +172,22 @@ async def identify_episode(
             traceback.print_exc()
             return {"match_found": False, "message": f"Error searching database: {str(e)}"}
         
+        # Normalize query timestamps to start from 0 (in case video doesn't start at 0)
+        if len(timestamps) > 0:
+            first_timestamp = timestamps[0]
+            normalized_timestamps = [t - first_timestamp for t in timestamps]
+        else:
+            normalized_timestamps = timestamps
+        
         # Aggregate results (Voting)
         episode_votes = Counter()
-        episode_timestamps = {}  # episode_id -> list of timestamps
+        episode_timestamps = {}  # episode_id -> list of (estimated_start, score) tuples
         
         for frame_idx, results in enumerate(search_results):
-            query_timestamp = timestamps[frame_idx]
+            query_timestamp = normalized_timestamps[frame_idx]  # Now 0-based
             for score, metadata in results:
-                # Filter by score threshold (e.g., 0.8) if needed
-                if score > 0.5: # Lower threshold for MVP
+                # Filter by score threshold - use higher threshold for better matches
+                if score > 0.6:  # Increased threshold for more accurate matches
                     ep_id = metadata['episode_id']
                     ep_timestamp = metadata['timestamp']
                     
@@ -189,14 +196,50 @@ async def identify_episode(
                     if ep_id not in episode_timestamps:
                         episode_timestamps[ep_id] = []
                     # Estimate where the clip starts in the episode
-                    # If match is at ep_time T and query is at q_time t, start is T - t
-                    episode_timestamps[ep_id].append(ep_timestamp - query_timestamp)
+                    # If match is at ep_time T and query frame is at q_time t (0-based), start is T - t
+                    estimated_start = ep_timestamp - query_timestamp
+                    episode_timestamps[ep_id].append((estimated_start, score))  # Store with score for weighting
 
         if episode_votes:
             best_ep_id, votes = episode_votes.most_common(1)[0]
-            # Calculate average estimated start time
-            est_times = episode_timestamps[best_ep_id]
-            avg_start_time = sum(est_times) / len(est_times)
+            # Calculate estimated start time using multiple methods
+            est_times_with_scores = episode_timestamps[best_ep_id]
+            
+            if not est_times_with_scores:
+                avg_start_time = 0
+            else:
+                # Method 1: Use median (more robust to outliers)
+                est_times = [t for t, s in est_times_with_scores]
+                est_times_sorted = sorted(est_times)
+                median_start_time = est_times_sorted[len(est_times_sorted) // 2]
+                
+                # Method 2: Use weighted average (weight by similarity score)
+                total_weight = sum(s for _, s in est_times_with_scores)
+                if total_weight > 0:
+                    weighted_avg = sum(t * s for t, s in est_times_with_scores) / total_weight
+                else:
+                    weighted_avg = median_start_time
+                
+                # Method 3: Use earliest match (most conservative - likely most accurate)
+                earliest_start = min(est_times)
+                
+                # Use the best strategy based on match quality
+                # Filter to only high-confidence matches (score > 0.65)
+                high_conf_matches = [(t, s) for t, s in est_times_with_scores if s > 0.65]
+                
+                if len(high_conf_matches) >= 5:
+                    # If we have many high-confidence matches, use their median
+                    high_conf_times = sorted([t for t, s in high_conf_matches])
+                    avg_start_time = high_conf_times[len(high_conf_times) // 2]
+                elif len(high_conf_matches) >= 2:
+                    # If we have a few high-confidence matches, use weighted average
+                    total_weight = sum(s for _, s in high_conf_matches)
+                    avg_start_time = sum(t * s for t, s in high_conf_matches) / total_weight
+                else:
+                    # Otherwise use earliest match from all matches
+                    avg_start_time = earliest_start
+                
+                print(f"Timestamp calculation: {len(est_times)} matches, median={median_start_time:.1f}s, weighted={weighted_avg:.1f}s, earliest={earliest_start:.1f}s, final={avg_start_time:.1f}s")
             
             best_visual_match = {
                 "episode_id": best_ep_id,
