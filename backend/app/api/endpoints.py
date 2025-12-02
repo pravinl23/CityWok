@@ -86,17 +86,31 @@ async def identify_episode(
     best_visual_match = None
     try:
         print(f"Processing file: {file.filename} ({file_size / (1024*1024):.1f} MB)")
+        
+        # Verify file exists and is readable
+        if not os.path.exists(temp_path):
+            return {"match_found": False, "message": "Temporary file was not saved correctly"}
+        
         # Extract frames
         print("Extracting frames...")
-        frames_data = video_processor.extract_frames(temp_path, sampling_rate=1)
-        if not frames_data:
-             return {"match_found": False, "message": "No frames extracted from video"}
+        try:
+            frames_data = video_processor.extract_frames(temp_path, sampling_rate=1)
+        except Exception as e:
+            print(f"Error extracting frames: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"match_found": False, "message": f"Error extracting frames: {str(e)}"}
+            
+        if not frames_data or len(frames_data) == 0:
+            return {"match_found": False, "message": "No frames extracted from video"}
         
         print(f"Extracted {len(frames_data)} frames")
-        if len(frames_data) == 0:
-            return {"match_found": False, "message": "No frames extracted from video"}
             
-        timestamps, images = zip(*frames_data)
+        try:
+            timestamps, images = zip(*frames_data)
+        except Exception as e:
+            print(f"Error unpacking frames: {e}")
+            return {"match_found": False, "message": f"Error processing frames: {str(e)}"}
         
         # Compute embeddings
         print("Computing embeddings...")
