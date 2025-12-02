@@ -47,21 +47,35 @@ class VideoProcessor:
             interval = int(fps / sampling_rate) if sampling_rate < fps else 1
             
             frame_count = 0
-            max_frames = 100  # Limit to prevent memory issues
-            while len(frames) < max_frames:
+            max_frames = 50  # Limit to prevent memory issues (reduced from 100)
+            max_iterations = 10000  # Safety limit to prevent infinite loops
+            
+            while len(frames) < max_frames and frame_count < max_iterations:
                 ret, frame = cap.read()
                 if not ret:
                     break
+                
+                # Skip empty frames
+                if frame is None or frame.size == 0:
+                    frame_count += 1
+                    continue
                     
                 if frame_count % interval == 0:
                     try:
                         # Convert BGR (OpenCV) to RGB (PIL)
+                        if len(frame.shape) != 3 or frame.shape[2] != 3:
+                            frame_count += 1
+                            continue
+                            
                         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         pil_image = Image.fromarray(rgb_frame)
                         timestamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                        if timestamp < 0:
+                            timestamp = frame_count / fps
                         frames.append((timestamp, pil_image))
                     except Exception as e:
                         print(f"Error processing frame {frame_count}: {e}")
+                        frame_count += 1
                         continue
                 
                 frame_count += 1
