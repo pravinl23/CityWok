@@ -3,6 +3,7 @@ from typing import Dict, Any
 import os
 import shutil
 import uuid
+import numpy as np
 from app.services.video_processor import video_processor
 from app.services.vector_db import vector_db
 
