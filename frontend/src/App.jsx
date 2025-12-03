@@ -107,11 +107,11 @@ function App() {
             >
               <div className="upload-icon">↑</div>
               <p className="upload-text">Drag & Drop Media</p>
-              <p className="upload-formats">(MP4, MP3, PNG, JPG)</p>
+              <p className="upload-formats">(MP4, MP3, WAV, M4A)</p>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="video/*,audio/*,image/*"
+                accept="video/*,audio/*"
                 onChange={handleFileInputChange}
                 style={{ display: 'none' }}
               />
@@ -154,18 +154,56 @@ function App() {
                 {result.match_found ? (
                   <>
                     <h3 className="result-title">Match Found!</h3>
-                    <p className="result-episode">Episode: {result.episode}</p>
-                    <p className="result-timestamp">Time: {result.timestamp}</p>
-                    <div className="result-details">
-                      <small>Confidence: {result.details?.confidence}</small>
-                      <br/>
-                      <small>Method: {result.details?.method}</small>
+                    <div className="primary-result">
+                      <p className="result-episode">Episode: {result.episode}</p>
+                      <p className="result-timestamp">Time: {result.timestamp}</p>
+                      <div className="result-details">
+                        <small>Confidence: {result.details?.confidence}</small>
+                        <br/>
+                        <small>Method: {result.details?.method || 'hybrid'}</small>
+                      </div>
+                    </div>
+
+                    <div className="method-results">
+                      {result.visual_result && (
+                        <div className="method-item">
+                          <strong>Visual Match:</strong><br/>
+                          {result.visual_result.episode} @ {result.visual_result.timestamp}<br/>
+                          <small>(Conf: {result.visual_result.confidence})</small>
+                        </div>
+                      )}
+                      
+                      {result.audio_result && (
+                        <div className="method-item">
+                          <strong>Audio Match:</strong><br/>
+                          {result.audio_result.episode} @ {result.audio_result.timestamp}<br/>
+                          <small>(Conf: {result.audio_result.confidence})</small>
+                        </div>
+                      )}
                     </div>
                   </>
                 ) : (
                   <div className="no-match">
                     <h3>No Match Found</h3>
                     <p>{result.message}</p>
+                    {(result.visual_result || result.audio_result) && (
+                      <div className="method-results" style={{marginTop: '15px'}}>
+                        {result.visual_result && (
+                          <div className="method-item" style={{opacity: 0.7}}>
+                            <strong>Best Guess (Visual):</strong><br/>
+                            {result.visual_result.episode} @ {result.visual_result.timestamp}<br/>
+                            <small>(Conf: {result.visual_result.confidence})</small>
+                          </div>
+                        )}
+                        {result.audio_result && (
+                          <div className="method-item" style={{opacity: 0.7}}>
+                            <strong>Best Guess (Audio):</strong><br/>
+                            {result.audio_result.episode} @ {result.audio_result.timestamp}<br/>
+                            <small>(Conf: {result.audio_result.confidence})</small>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -11,7 +11,7 @@ import requests
 from pathlib import Path
 import re
 
-def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://localhost:8000", show_progress: bool = True):
+def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://localhost:8000", show_progress: bool = True, audio_only: bool = False):
     """
     Ingest a single episode into the database.
     """
@@ -37,6 +37,8 @@ def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://local
             with open(file_path, 'rb') as f:
                 files = {'file': (os.path.basename(file_path), f, 'video/mp4')}
                 params = {'episode_id': episode_id}
+                if audio_only:
+                    params['audio_only'] = 'true'  # Skip video re-processing
                 
                 # Use stream=True to show progress, but for simplicity we'll just show upload start
                 response = requests.post(
@@ -117,7 +119,7 @@ def sort_files_by_episode(files: list) -> list:
     
     return sorted(files, key=get_sort_key)
 
-def ingest_directory(directory: str, api_url: str = "http://localhost:8000", skip_existing: bool = True, season: int = None):
+def ingest_directory(directory: str, api_url: str = "http://localhost:8000", skip_existing: bool = True, season: int = None, audio_only: bool = False):
     """
     Ingest all video files in a directory.
     
@@ -147,15 +149,37 @@ def ingest_directory(directory: str, api_url: str = "http://localhost:8000", ski
     already_ingested = set()
     if skip_existing:
         try:
-            from app.services.vector_db import vector_db
-            from collections import Counter
-            episode_counts = Counter()
-            for meta in vector_db.metadata.values():
-                ep_id = meta.get('episode_id', 'unknown')
-                episode_counts[ep_id] += 1
-            already_ingested = set(episode_counts.keys())
-            if already_ingested:
-                print(f"Found {len(already_ingested)} already ingested episodes: {sorted(already_ingested)}")
+            if audio_only:
+                # For audio-only, check audio database instead
+                from app.services.audio_fingerprint import audio_matcher
+                import pickle
+                import os
+                from app.core.config import settings
+                audio_db_path = os.path.join(settings.DATA_DIR, "audio_fingerprints.pkl")
+                if os.path.exists(audio_db_path):
+                    with open(audio_db_path, 'rb') as f:
+                        fingerprints = pickle.load(f)
+                    # Extract unique episode IDs from audio fingerprints
+                    audio_episodes = set()
+                    for ep_list in fingerprints.values():
+                        for ep_id, _ in ep_list:
+                            audio_episodes.add(ep_id)
+                    already_ingested = audio_episodes
+                    if already_ingested:
+                        print(f"Found {len(already_ingested)} episodes with audio fingerprints: {sorted(already_ingested)}")
+                else:
+                    print("No audio fingerprint database found. Will process all episodes.")
+            else:
+                # For video, check video database
+                from app.services.vector_db import vector_db
+                from collections import Counter
+                episode_counts = Counter()
+                for meta in vector_db.metadata.values():
+                    ep_id = meta.get('episode_id', 'unknown')
+                    episode_counts[ep_id] += 1
+                already_ingested = set(episode_counts.keys())
+                if already_ingested:
+                    print(f"Found {len(already_ingested)} already ingested episodes: {sorted(already_ingested)}")
         except Exception as e:
             print(f"Warning: Could not check existing episodes: {e}")
     
@@ -201,7 +225,7 @@ def ingest_directory(directory: str, api_url: str = "http://localhost:8000", ski
             continue
         
         try:
-            if ingest_episode(str(video_file), episode_id, api_url):
+            if ingest_episode(str(video_file), episode_id, api_url, audio_only=audio_only):
                 successful += 1
             else:
                 failed += 1
@@ -251,6 +275,14 @@ if __name__ == "__main__":
                     print(f"Warning: Invalid season number '{args[i + 1]}', skipping")
         sys.exit(0)
     
+    # Check for --audio-only flag
+    audio_only = '--audio-only' in sys.argv
+    if audio_only:
+        sys.argv.remove('--audio-only')
+        print("=" * 60)
+        print("AUDIO-ONLY MODE: Skipping video processing, only processing audio")
+        print("=" * 60)
+    
     # Single file or directory
     path = sys.argv[1]
     season = None
@@ -263,7 +295,7 @@ if __name__ == "__main__":
                 print(f"Using Season {season:02d} for episodes without explicit season number.")
             except ValueError:
                 print(f"Warning: Invalid season number '{sys.argv[2]}', using default Season 1")
-        ingest_directory(path, season=season)
+        ingest_directory(path, season=season, audio_only=audio_only)
     elif os.path.isfile(path):
         # Ingest single file
         if len(sys.argv) < 3:
@@ -271,7 +303,9 @@ if __name__ == "__main__":
             print('Usage: python ingest_episodes.py <file> <episode_id>')
             sys.exit(1)
         episode_id = sys.argv[2]
-        success = ingest_episode(path, episode_id)
+        # Check for --audio-only flag
+        audio_only = '--audio-only' in sys.argv
+        success = ingest_episode(path, episode_id, audio_only=audio_only)
         sys.exit(0 if success else 1)
     else:
         print(f"Error: Path not found: {path}")
