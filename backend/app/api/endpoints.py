@@ -1,13 +1,25 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Query
-from typing import Dict, Any
+"""
+CityWok API Endpoints
+
+Hybrid video + audio identification with:
+- Visual: CLIP embeddings + FAISS vector search
+- Audio: Shazam-style spectral peak fingerprinting
+- Hybrid confirmation: Cross-verify both modalities
+"""
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Query, Form
+from typing import Dict, Any, Optional
 import os
 import shutil
 import uuid
+import tempfile
 import numpy as np
 from app.services.video_processor import video_processor
 from app.services.vector_db import vector_db
+from app.core.config import settings
+from collections import Counter
 
-# Audio fingerprinting is optional
+# Audio fingerprinting
 try:
     from app.services.audio_fingerprint import audio_matcher
     AUDIO_AVAILABLE = True
@@ -15,474 +27,525 @@ except ImportError:
     AUDIO_AVAILABLE = False
     audio_matcher = None
     print("Warning: Audio fingerprinting not available")
-from app.core.config import settings
-from collections import Counter
+
+# URL downloading (optional)
+try:
+    from yt_dlp import YoutubeDL
+    URL_DOWNLOAD_AVAILABLE = True
+except ImportError:
+    URL_DOWNLOAD_AVAILABLE = False
+    print("Warning: yt-dlp not available - URL downloads disabled")
 
 router = APIRouter()
 
+
 def cleanup_file(path: str):
+    """Remove temporary file."""
     if os.path.exists(path):
         try:
             os.remove(path)
         except Exception as e:
             print(f"Warning: Could not delete temp file {path}: {e}")
 
+
+def download_video_from_url(url: str) -> str:
+    """Download video from URL using yt-dlp. Returns path to temp file."""
+    if not URL_DOWNLOAD_AVAILABLE:
+        raise HTTPException(status_code=400, detail="URL downloads not available. Install yt-dlp.")
+    
+    # Create temp file
+    tmp = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    os.remove(tmp_path)  # yt-dlp needs to create the file
+    
+    ydl_opts = {
+        'outtmpl': tmp_path,
+        'quiet': True,
+        'no_warnings': True,
+        'format': 'best[ext=mp4]/best',
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': url,
+        }
+    }
+    
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        
+        if not os.path.exists(tmp_path):
+            raise HTTPException(status_code=400, detail="Failed to download video from URL")
+            
+        return tmp_path
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise HTTPException(status_code=400, detail=f"Failed to download video: {str(e)}")
+
+
+def format_time(seconds: float) -> str:
+    """Format seconds as H:MM:SS."""
+    m, s = divmod(int(max(0, seconds)), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+def has_audio_track(file_path: str) -> bool:
+    """Check if a video file has an audio track."""
+    try:
+        import librosa
+        # Try to load just a small sample (0.5 seconds) to check for audio
+        # This is much faster than loading the whole file
+        y, sr = librosa.load(file_path, sr=22050, mono=True, duration=0.5, offset=0.0)
+        # Check if audio is not silent (has some signal)
+        if len(y) == 0:
+            return False
+        # Check if there's actual audio content (not just silence)
+        if np.max(np.abs(y)) < 0.001:  # Very quiet threshold
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️  Could not check audio track: {e}")
+        # If we can't check, assume it has audio (most videos do)
+        # This way we don't skip audio analysis unnecessarily
+        return True
+
+
 @router.get("/test")
 async def test_endpoint():
-    """Simple test endpoint to verify API is working."""
-    return {"status": "ok", "message": "API is working"}
+    """Health check endpoint."""
+    return {
+        "status": "ok",
+        "message": "CityWok API is running",
+        "features": {
+            "audio": AUDIO_AVAILABLE,
+            "url_download": URL_DOWNLOAD_AVAILABLE,
+        }
+    }
+
+
+@router.get("/stats")
+async def get_stats():
+    """Get database statistics."""
+    stats = {
+        "vector_db": vector_db.get_stats(),
+    }
+    if AUDIO_AVAILABLE and audio_matcher:
+        stats["audio_db"] = audio_matcher.get_stats()
+    return stats
+
 
 @router.post("/identify")
 async def identify_episode(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
+    file: Optional[UploadFile] = File(None),
+    url: Optional[str] = Form(None),
+    audio_only: bool = Form(False)
 ):
     """
-    Identify the episode from a video clip.
+    Identify episode from a video/audio clip.
+    
+    Supports:
+    - File upload (video or audio)
+    - URL (TikTok, YouTube, etc. via yt-dlp)
+    - audio_only: If True, only use audio matching
+    
+    Returns hybrid match combining visual and audio analysis.
     """
+    
+    # Validate input
+    if not file and not url:
+        raise HTTPException(status_code=400, detail="Provide either a file or URL")
+    
+    temp_path = None
+    source_name = "unknown"
+    
     try:
-        # Check file extension (case-insensitive)
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No filename provided")
+        # Get video file (from upload or URL)
+        if url:
+            print(f"📥 Downloading from URL: {url}")
+            temp_path = download_video_from_url(url)
+            source_name = url[:50]
+        else:
+            # Validate file
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No filename provided")
             
             filename_lower = file.filename.lower()
-            # Accept both video and audio files
             video_formats = ('.mp4', '.mov', '.avi', '.mpeg', '.mpg', '.mkv', '.webm')
             audio_formats = ('.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma')
+            
             if not filename_lower.endswith(video_formats + audio_formats):
-                raise HTTPException(status_code=400, detail="Invalid file format. Please upload a video or audio file.")
+                raise HTTPException(status_code=400, detail="Invalid file format")
             
-            is_audio_file = filename_lower.endswith(audio_formats)
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error checking file: {e}")
-        raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
+            # Save uploaded file
+            file_id = str(uuid.uuid4())
+            temp_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}_{file.filename}")
+            os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+            
+            with open(temp_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            file.file.close()
+            
+            source_name = file.filename
         
-    # Save temp file
-    file_id = str(uuid.uuid4())
-    temp_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}_{file.filename}")
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    
-    try:
-        with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # Get file size after saving
+        # Check file size
         file_size = os.path.getsize(temp_path)
-        
-        # Check file size (max 100MB)
         if file_size > 100 * 1024 * 1024:
-            os.remove(temp_path)
-            raise HTTPException(status_code=400, detail="File too large. Maximum size is 100MB.")
+            raise HTTPException(status_code=400, detail="File too large (max 100MB)")
+        
+        print(f"📹 Processing: {source_name} ({file_size / (1024*1024):.1f} MB)")
+        
+        # Determine if audio-only file (by extension)
+        is_audio_file = source_name.lower().endswith(('.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma'))
+        
+        # If user explicitly requested audio_only, or it's an audio file, skip visual
+        use_audio_only = audio_only or is_audio_file
+        
+        # Check if video file has audio track (only for video files)
+        has_audio = True
+        if not is_audio_file:
+            has_audio = has_audio_track(temp_path)
+            if not has_audio:
+                print("⚠️  No audio track detected in video file")
+        
+        # Schedule cleanup
+        background_tasks.add_task(cleanup_file, temp_path)
+        
+        # ===== VISUAL ANALYSIS =====
+        best_visual_match = None
+        if not use_audio_only:
+            best_visual_match = await run_visual_analysis(temp_path)
+        
+        # ===== AUDIO ANALYSIS =====
+        best_audio_match = None
+        if AUDIO_AVAILABLE and audio_matcher and has_audio:
+            # If audio_only mode: always run audio
+            # Otherwise: only run audio if visual confidence < 50
+            should_run_audio = use_audio_only or (best_visual_match is None or best_visual_match.get('confidence', 0) < 50)
+            
+            if should_run_audio:
+                best_audio_match = await run_audio_analysis(temp_path)
+        elif not has_audio:
+            print("⏭️  Skipping audio analysis (no audio track)")
+        
+        # ===== HYBRID CONFIRMATION =====
+        return create_hybrid_result(best_visual_match, best_audio_match)
+        
+    except HTTPException:
+        raise
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error saving file: {e}")
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
-    finally:
-        file.file.close()
-        
-    # Schedule cleanup
-    background_tasks.add_task(cleanup_file, temp_path)
-    
-    # Determine if this is an audio-only file
-    is_audio_only = False
-    if file:
-        filename_lower = file.filename.lower()
-        audio_formats = ('.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma')
-        is_audio_only = filename_lower.endswith(audio_formats)
-    
-    # 1. Video Analysis (skip if audio-only file)
-    best_visual_match = None
-    if not is_audio_only:
-        try:
-            file_size = os.path.getsize(temp_path)
-            print(f"Processing: {source_name} ({file_size / (1024*1024):.1f} MB)")
-            
-            # Verify file exists and is readable
-            if not os.path.exists(temp_path):
-                return {"match_found": False, "message": "Temporary file was not saved correctly"}
-            
-            # Extract frames
-            print("Extracting frames...")
-            try:
-                frames_data = video_processor.extract_frames(temp_path, sampling_rate=1)
-            except Exception as e:
-                print(f"Error extracting frames: {e}")
-                import traceback
-                traceback.print_exc()
-                return {"match_found": False, "message": f"Error extracting frames: {str(e)}"}
-                
-            if not frames_data or len(frames_data) == 0:
-                return {"match_found": False, "message": "No frames extracted from video"}
-            
-            print(f"Extracted {len(frames_data)} frames")
-                
-            try:
-                timestamps, images = zip(*frames_data)
-            except Exception as e:
-                print(f"Error unpacking frames: {e}")
-                return {"match_found": False, "message": f"Error processing frames: {str(e)}"}
-            
-            # Compute embeddings
-            print("Computing embeddings...")
-            try:
-                embeddings = video_processor.compute_embeddings(list(images))
-                print(f"Computed {len(embeddings)} embeddings")
-                
-                # Validate embeddings
-                if len(embeddings) == 0:
-                    return {"match_found": False, "message": "No embeddings computed"}
-                
-                if embeddings.shape[0] != len(images):
-                    print(f"Warning: Embedding count {embeddings.shape[0]} doesn't match image count {len(images)}")
-                    
-                print(f"Embeddings shape: {embeddings.shape}, dtype: {embeddings.dtype}")
-                
-            except Exception as e:
-                print(f"Error computing embeddings: {e}")
-                import traceback
-                traceback.print_exc()
-                return {"match_found": False, "message": f"Error processing video: {str(e)}"}
-            
-            # Search in Vector DB
-            # Search top 5 matches for each frame
-            print("Searching vector database...")
-            try:
-                # Limit to reasonable number of frames to search
-                max_frames_to_search = 15  # Small but reasonable number
-                if len(embeddings) > max_frames_to_search:
-                    print(f"Limiting search to first {max_frames_to_search} frames (had {len(embeddings)})")
-                    embeddings = embeddings[:max_frames_to_search].copy()
-                    timestamps = timestamps[:max_frames_to_search]
-                
-                # Ensure embeddings are float32 for FAISS and properly shaped
-                if embeddings.dtype != np.float32:
-                    embeddings = embeddings.astype(np.float32)
-                
-                # Ensure 2D array
-                if embeddings.ndim == 1:
-                    embeddings = embeddings.reshape(1, -1)
-                
-                print(f"Searching with embeddings shape: {embeddings.shape}, dtype: {embeddings.dtype}")
-                
-                # Final validation before search
-                if np.any(np.isnan(embeddings)) or np.any(np.isinf(embeddings)):
-                    print("Error: Embeddings contain NaN or Inf values")
-                    return {"match_found": False, "message": "Invalid embeddings computed"}
-                
-                search_results = vector_db.search(embeddings, k=5)
-                print(f"Found {len(search_results)} search result sets")
-                
-                if not search_results or len(search_results) == 0:
-                    return {"match_found": False, "message": "No search results returned from database"}
-                    
-            except Exception as e:
-                print(f"Error searching database: {e}")
-                import traceback
-                traceback.print_exc()
-                return {"match_found": False, "message": f"Error searching database: {str(e)}"}
-            
-            # Normalize query timestamps to start from 0 (in case video doesn't start at 0)
-            if len(timestamps) > 0:
-                first_timestamp = timestamps[0]
-                normalized_timestamps = [t - first_timestamp for t in timestamps]
-            else:
-                normalized_timestamps = timestamps
-            
-            # Aggregate results (Voting)
-            episode_votes = Counter()
-            episode_timestamps = {}  # episode_id -> list of (estimated_start, score) tuples
-            
-            for frame_idx, results in enumerate(search_results):
-                query_timestamp = normalized_timestamps[frame_idx]  # Now 0-based
-                for score, metadata in results:
-                    # Filter by score threshold - use higher threshold for better matches
-                    if score > 0.6:  # Increased threshold for more accurate matches
-                        ep_id = metadata['episode_id']
-                        ep_timestamp = metadata['timestamp']
-                        
-                        episode_votes[ep_id] += 1
-                        
-                        if ep_id not in episode_timestamps:
-                            episode_timestamps[ep_id] = []
-                        # Estimate where the clip starts in the episode
-                        # If match is at ep_time T and query frame is at q_time t (0-based), start is T - t
-                        estimated_start = ep_timestamp - query_timestamp
-                        episode_timestamps[ep_id].append((estimated_start, score))  # Store with score for weighting
+        error_msg = str(e)
+        print(f"❌ Error in identify_episode: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        # Return more detailed error message
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Identification failed: {error_msg}. Check server logs for details."
+        )
 
-            if episode_votes:
-                best_ep_id, votes = episode_votes.most_common(1)[0]
-                # Calculate estimated start time using multiple methods
-                est_times_with_scores = episode_timestamps[best_ep_id]
-                
-                if not est_times_with_scores:
-                    avg_start_time = 0
-                else:
-                    # Method 1: Use median (more robust to outliers)
-                    est_times = [t for t, s in est_times_with_scores]
-                    est_times_sorted = sorted(est_times)
-                    median_start_time = est_times_sorted[len(est_times_sorted) // 2]
-                    
-                    # Method 2: Use weighted average (weight by similarity score)
-                    total_weight = sum(s for _, s in est_times_with_scores)
-                    if total_weight > 0:
-                        weighted_avg = sum(t * s for t, s in est_times_with_scores) / total_weight
-                    else:
-                        weighted_avg = median_start_time
-                    
-                    # Method 3: Use earliest match (most conservative - likely most accurate)
-                    earliest_start = min(est_times)
-                    
-                    # Use the best strategy based on match quality
-                    # Filter to only high-confidence matches (score > 0.65)
-                    high_conf_matches = [(t, s) for t, s in est_times_with_scores if s > 0.65]
-                    
-                    if len(high_conf_matches) >= 5:
-                        # If we have many high-confidence matches, use their median
-                        high_conf_times = sorted([t for t, s in high_conf_matches])
-                        avg_start_time = high_conf_times[len(high_conf_times) // 2]
-                    elif len(high_conf_matches) >= 2:
-                        # If we have a few high-confidence matches, use weighted average
-                        total_weight = sum(s for _, s in high_conf_matches)
-                        avg_start_time = sum(t * s for t, s in high_conf_matches) / total_weight
-                    else:
-                        # Otherwise use earliest match from all matches
-                        avg_start_time = earliest_start
-                    
-                    print(f"Timestamp calculation: {len(est_times)} matches, median={median_start_time:.1f}s, weighted={weighted_avg:.1f}s, earliest={earliest_start:.1f}s, final={avg_start_time:.1f}s")
-                
-                best_visual_match = {
-                    "episode_id": best_ep_id,
-                    "estimated_timestamp": max(0, avg_start_time),
-                    "confidence": votes,
-                    "method": "visual"
-                }
-                print(f"Best visual match: {best_ep_id} with {votes} votes")
-            else:
-                print("No episode votes found")
-                
-        except Exception as e:
-            import traceback
-            print(f"Visual analysis failed: {e}")
-            traceback.print_exc()
-            best_visual_match = None
-    else:
-        if is_audio_only:
-            print("Skipping visual analysis (audio-only file)")
 
-    # 2. Audio Analysis
-    best_audio_match = None
-    if AUDIO_AVAILABLE and audio_matcher:
-        try:
-            print("Running audio analysis...")
-            audio_result = audio_matcher.match_clip(temp_path)
-            if audio_result:
-                best_audio_match = {
-                    "episode_id": audio_result['episode_id'],
-                    "estimated_timestamp": max(0, audio_result['timestamp']),
-                    "confidence": audio_result['confidence'],
-                    "method": "audio"
-                }
-                print(f"Audio match found: {best_audio_match['episode_id']} (conf={best_audio_match['confidence']})")
-        except Exception as e:
-            print(f"Audio analysis failed: {e}")
-            import traceback
-            traceback.print_exc()
+async def run_visual_analysis(temp_path: str) -> Optional[Dict[str, Any]]:
+    """Run CLIP-based visual analysis on video."""
+    try:
+        print("🎬 Running visual analysis...")
         
-    # Hybrid Retrieval: Combine Visual + Audio Results
-    visual_conf = best_visual_match.get('confidence', 0) if best_visual_match else 0
-    audio_conf = best_audio_match.get('confidence', 0) if best_audio_match else 0
+        # Extract keyframes (scene change detection)
+        frames_data = video_processor.extract_keyframes(temp_path, max_frames=50)
+        
+        if not frames_data:
+            print("No frames extracted")
+            return None
+        
+        timestamps, images = zip(*frames_data)
+        
+        # Compute CLIP embeddings
+        embeddings = video_processor.compute_embeddings(list(images))
+        
+        if len(embeddings) == 0:
+            print("No embeddings computed")
+            return None
+        
+        # Limit search to prevent timeouts
+        max_search = min(30, len(embeddings))
+        if len(embeddings) > max_search:
+            embeddings = embeddings[:max_search]
+            timestamps = timestamps[:max_search]
+        
+        # Normalize timestamps to start from 0
+        first_ts = timestamps[0]
+        norm_timestamps = [t - first_ts for t in timestamps]
+        
+        # Search vector database
+        print(f"🔍 Searching {len(embeddings)} embeddings...")
+        search_results = vector_db.search(embeddings, k=5)
+        
+        if not search_results or len(search_results) == 0:
+            print("No search results returned")
+            return None
+        
+        # Aggregate votes
+        episode_votes = Counter()
+        episode_timestamps = {}
+        
+        for frame_idx, results in enumerate(search_results):
+            if not results:
+                continue
+            query_ts = norm_timestamps[frame_idx]
+            for score, metadata in results:
+                if not isinstance(metadata, dict):
+                    print(f"Warning: Invalid metadata format: {type(metadata)}")
+                    continue
+                if score > 0.55:  # Similarity threshold
+                    ep_id = metadata.get('episode_id')
+                    if not ep_id:
+                        continue
+                    ep_ts = metadata.get('timestamp', 0)
+                    
+                    episode_votes[ep_id] += 1
+                    
+                    if ep_id not in episode_timestamps:
+                        episode_timestamps[ep_id] = []
+                    
+                    # Estimate clip start in episode
+                    estimated_start = ep_ts - query_ts
+                    episode_timestamps[ep_id].append((estimated_start, score))
+        
+        if not episode_votes:
+            print("No episode matches found")
+            return None
+        
+        # Get best match
+        best_ep_id, votes = episode_votes.most_common(1)[0]
+        est_times = episode_timestamps[best_ep_id]
+        
+        # Calculate timestamp using weighted median
+        if est_times:
+            sorted_times = sorted(est_times, key=lambda x: x[1], reverse=True)
+            high_conf = [t for t, s in sorted_times if s > 0.6]
+            
+            if len(high_conf) >= 3:
+                final_ts = sorted(high_conf)[len(high_conf) // 2]
+            else:
+                final_ts = min(t for t, s in est_times)
+        else:
+            final_ts = 0
+        
+        print(f"✓ Visual match: {best_ep_id} @ {format_time(final_ts)} ({votes} votes)")
+        
+        return {
+            "episode_id": best_ep_id,
+            "estimated_timestamp": max(0, final_ts),
+            "confidence": votes,
+            "method": "visual"
+        }
+        
+    except Exception as e:
+        print(f"Visual analysis error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+async def run_audio_analysis(temp_path: str) -> Optional[Dict[str, Any]]:
+    """Run spectral peak fingerprint analysis on audio."""
+    try:
+        print("🎵 Running audio analysis...")
+        
+        result = audio_matcher.match_clip(temp_path)
+        
+        if result:
+            print(f"✓ Audio match: {result['episode_id']} @ {format_time(result['timestamp'])} "
+                  f"({result.get('aligned_matches', result['confidence'])} aligned)")
+            return {
+                "episode_id": result['episode_id'],
+                "estimated_timestamp": max(0, result['timestamp']),
+                "confidence": result.get('aligned_matches', result['confidence']),
+                "method": "audio"
+            }
+        
+        print("No audio match found")
+        return None
+        
+    except Exception as e:
+        print(f"Audio analysis error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def create_hybrid_result(
+    visual: Optional[Dict[str, Any]],
+    audio: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Combine visual and audio results with hybrid confirmation.
     
-    print(f"Hybrid Retrieval - Visual: {visual_conf}, Audio: {audio_conf}")
+    Decision logic:
+    1. If both agree -> High confidence
+    2. If conflict -> Use weighted scoring
+    3. If only one -> Accept if above threshold
+    """
+    
+    # Safely extract confidence values
+    visual_conf = 0
+    if visual and isinstance(visual, dict):
+        visual_conf = visual.get('confidence', 0)
+        if not isinstance(visual_conf, (int, float)):
+            visual_conf = 0
+    
+    audio_conf = 0
+    if audio and isinstance(audio, dict):
+        audio_conf = audio.get('confidence', 0)
+        if not isinstance(audio_conf, (int, float)):
+            audio_conf = 0
+    
+    print(f"🔀 Hybrid decision: Visual={visual_conf}, Audio={audio_conf}")
     
     final_match = None
     
-    if best_visual_match and best_audio_match:
-        # Both methods found matches
-        if best_visual_match['episode_id'] == best_audio_match['episode_id']:
-            # Both agree - high confidence hybrid match
-            final_match = best_visual_match
-            final_match['confidence'] = f"High (V:{visual_conf} + A:{audio_conf})"
-            final_match['method'] = "hybrid"
-            print(f"✓ Hybrid match: Both methods agree on {final_match['episode_id']}")
+    if visual and audio:
+        if visual['episode_id'] == audio['episode_id']:
+            # Both agree - high confidence!
+            final_match = visual.copy()
+            final_match['method'] = "hybrid (confirmed)"
+            final_match['hybrid_confidence'] = f"V:{visual_conf}+A:{audio_conf}"
+            print(f"✓ CONFIRMED: Both methods agree on {final_match['episode_id']}")
+            
+            # Use timestamp from higher confidence method
+            if audio_conf > visual_conf * 2:
+                final_match['estimated_timestamp'] = audio['estimated_timestamp']
         else:
-            # Conflict: Use weighted decision
-            # Audio (chroma n-grams) is very specific and robust to visual edits
-            # Visual CLIP can be confused by similar scenes or edits
+            # Conflict - weighted decision
+            # Audio fingerprints are very specific (hash-based)
+            # Visual can be confused by similar scenes
             
-            # Calculate hybrid score
-            # Audio confidence is count of aligned hashes (20+ is strong)
-            # Visual confidence is vote count (15+ is decent, 30+ is strong)
-            
-            if audio_conf > 30 and visual_conf < 20:
-                # Strong audio, weak visual -> trust audio (likely cropped/mirrored video)
-                print(f"Conflict: Using audio match ({audio_conf}) - visual may be edited")
-                final_match = best_audio_match
-                final_match['method'] = "hybrid (audio-prioritized)"
-            elif visual_conf > 40 and audio_conf < 15:
-                # Strong visual, weak audio -> trust visual
-                print(f"Conflict: Using visual match ({visual_conf}) - audio may be noisy")
-                final_match = best_visual_match
-                final_match['method'] = "hybrid (visual-prioritized)"
+            if audio_conf >= 30 and visual_conf < 15:
+                print(f"⚠️ Conflict: Trusting audio ({audio_conf} >> {visual_conf})")
+                final_match = audio.copy()
+                final_match['method'] = "hybrid (audio wins)"
+            elif visual_conf >= 30 and audio_conf < 15:
+                print(f"⚠️ Conflict: Trusting visual ({visual_conf} >> {audio_conf})")
+                final_match = visual.copy()
+                final_match['method'] = "hybrid (visual wins)"
             elif audio_conf > visual_conf * 1.5:
-                # Audio is significantly stronger
-                print(f"Conflict: Using audio match ({audio_conf} vs {visual_conf})")
-                final_match = best_audio_match
-                final_match['method'] = "hybrid (audio-prioritized)"
+                print(f"⚠️ Conflict: Audio stronger ({audio_conf} > {visual_conf})")
+                final_match = audio.copy()
+                final_match['method'] = "hybrid (audio stronger)"
             else:
-                # Visual is stronger or equal
-                print(f"Conflict: Using visual match ({visual_conf} vs {audio_conf})")
-                final_match = best_visual_match
-                final_match['method'] = "hybrid (visual-prioritized)"
-                
-    elif best_audio_match:
-        # Only audio matched
-        if audio_conf > 20:
-            print(f"Only audio match found (conf={audio_conf}), accepting.")
-            final_match = best_audio_match
-        else:
-            print(f"Only audio match found but confidence too low ({audio_conf}).")
-            
-    elif best_visual_match:
-        # Only visual matched
-        if visual_conf > 15:
-            print(f"Only visual match found (conf={visual_conf}), accepting.")
-            final_match = best_visual_match
-        else:
-            print(f"Only visual match found but confidence too low ({visual_conf}).")
+                print(f"⚠️ Conflict: Visual stronger ({visual_conf} >= {audio_conf})")
+                final_match = visual.copy()
+                final_match['method'] = "hybrid (visual stronger)"
+    
+    elif audio and audio_conf >= 15:
+        print(f"Audio-only match (conf={audio_conf})")
+        final_match = audio
         
-    try:
-        if final_match:
-            # Format timestamp helper
-            def format_time(seconds):
-                m, s = divmod(int(seconds), 60)
-                h, m = divmod(m, 60)
-                return "%d:%02d:%02d" % (h, m, s)
-
-            time_str = format_time(final_match['estimated_timestamp'])
-            
-            # Format detailed results for both methods
-            visual_details = None
-            if best_visual_match:
-                visual_details = {
-                    "episode": best_visual_match['episode_id'],
-                    "timestamp": format_time(best_visual_match['estimated_timestamp']),
-                    "confidence": best_visual_match['confidence']
-                }
-
-            audio_details = None
-            if best_audio_match:
-                audio_details = {
-                    "episode": best_audio_match['episode_id'],
-                    "timestamp": format_time(best_audio_match['estimated_timestamp']),
-                    "confidence": best_audio_match['confidence']
-                }
-            
-            result = {
-                "match_found": True,
-                "episode": final_match['episode_id'],
-                "timestamp": time_str,
-                "details": final_match,
-                "visual_result": visual_details,
-                "audio_result": audio_details
-            }
-            print(f"Returning hybrid match result: {result}")
-            return result
-        else:
-            # Return partial results even if no final match
-            visual_details = None
-            if best_visual_match:
-                def format_time(seconds):
-                    m, s = divmod(int(seconds), 60)
-                    h, m = divmod(m, 60)
-                    return "%d:%02d:%02d" % (h, m, s)
-                visual_details = {
-                    "episode": best_visual_match['episode_id'],
-                    "timestamp": format_time(best_visual_match['estimated_timestamp']),
-                    "confidence": best_visual_match['confidence']
-                }
-            
-            audio_details = None
-            if best_audio_match:
-                def format_time(seconds):
-                    m, s = divmod(int(seconds), 60)
-                    h, m = divmod(m, 60)
-                    return "%d:%02d:%02d" % (h, m, s)
-                audio_details = {
-                    "episode": best_audio_match['episode_id'],
-                    "timestamp": format_time(best_audio_match['estimated_timestamp']),
-                    "confidence": best_audio_match['confidence']
-                }
-            
-            result = {
-                "match_found": False,
-                "message": "Could not identify episode with high confidence.",
-                "visual_result": visual_details,
-                "audio_result": audio_details
-            }
-            print(f"Returning no match result: {result}")
-            return result
-    except Exception as e:
-        print(f"Error formatting response: {e}")
-        import traceback
-        traceback.print_exc()
+    elif visual and visual_conf >= 10:
+        print(f"Visual-only match (conf={visual_conf})")
+        final_match = visual
+    
+    # Format response
+    visual_result = None
+    if visual:
+        visual_result = {
+            "episode": visual['episode_id'],
+            "timestamp": format_time(visual['estimated_timestamp']),
+            "confidence": visual['confidence']
+        }
+    
+    audio_result = None
+    if audio:
+        audio_result = {
+            "episode": audio['episode_id'],
+            "timestamp": format_time(audio['estimated_timestamp']),
+            "confidence": audio['confidence']
+        }
+    
+    if final_match:
+        return {
+            "match_found": True,
+            "episode": final_match['episode_id'],
+            "timestamp": format_time(final_match['estimated_timestamp']),
+            "confidence": final_match['confidence'],
+            "method": final_match['method'],
+            "visual_result": visual_result,
+            "audio_result": audio_result
+        }
+    else:
         return {
             "match_found": False,
-            "message": f"Error processing result: {str(e)}"
+            "message": "No confident match found",
+            "visual_result": visual_result,
+            "audio_result": audio_result
         }
+
+
+@router.post("/admin/clear-audio")
+async def clear_audio_db():
+    """Clear the audio fingerprint database (admin only)."""
+    if AUDIO_AVAILABLE and audio_matcher:
+        audio_matcher.clear_db()
+        return {"status": "success", "message": "Audio database cleared"}
+    return {"status": "error", "message": "Audio service not available"}
+
 
 @router.post("/ingest")
 async def ingest_episode(
     episode_id: str,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    audio_only: bool = Query(False, description="Skip video processing, only process audio")
+    audio_only: bool = Query(False, description="Skip video, only process audio")
 ):
     """
-    Ingest an episode into the database (Admin/Dev tool).
+    Ingest an episode into the database.
     
-    Args:
-        episode_id: Episode identifier (e.g., "S01E01")
-        file: Video file to ingest
-        audio_only: If True, skip video processing (only process audio)
+    Processes both video (CLIP embeddings) and audio (spectral fingerprints).
     """
     temp_path = os.path.join(settings.UPLOAD_DIR, f"ingest_{episode_id}_{file.filename}")
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-        
-    # 1. Video (skip if audio_only=True)
+    
+    results = {"episode_id": episode_id, "video": False, "audio": False}
+    
+    # Video processing
     if not audio_only:
         try:
-            frames = video_processor.extract_frames(temp_path, sampling_rate=0.5) # Sparse for index
+            print(f"📹 Processing video for {episode_id}...")
+            
+            # Use keyframe extraction for efficiency
+            frames = video_processor.extract_keyframes(temp_path, max_frames=200)
+            
             if frames:
                 timestamps, images = zip(*frames)
                 embeddings = video_processor.compute_embeddings(list(images))
                 
                 metadata = [{"episode_id": episode_id, "timestamp": t} for t in timestamps]
                 vector_db.add_embeddings(embeddings, metadata)
-                print(f"Video embeddings added for {episode_id}")
+                
+                results["video"] = True
+                results["video_frames"] = len(frames)
+                print(f"✓ Added {len(frames)} video embeddings for {episode_id}")
         except Exception as e:
-            return {"status": "error", "message": f"Video processing failed: {str(e)}"}
-    else:
-        print(f"Skipping video processing for {episode_id} (audio_only=True)")
-        
-    # 2. Audio
+            results["video_error"] = str(e)
+            print(f"Video error: {e}")
+    
+    # Audio processing
     if AUDIO_AVAILABLE and audio_matcher:
         try:
+            print(f"🎵 Processing audio for {episode_id}...")
             audio_matcher.add_episode(episode_id, temp_path)
-            print(f"Audio fingerprints added for {episode_id}")
+            results["audio"] = True
         except Exception as e:
-             print(f"Audio ingestion warning: {e}")
-    else:
-        print("Audio fingerprinting not available")
-
+            results["audio_error"] = str(e)
+            print(f"Audio error: {e}")
+    
     background_tasks.add_task(cleanup_file, temp_path)
     
-    return {"status": "success", "message": f"Ingested episode {episode_id} (audio_only={audio_only})"}
-
+    return {"status": "success", "results": results}
