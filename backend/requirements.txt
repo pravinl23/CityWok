@@ -1,15 +1,31 @@
+# CityWok Backend Dependencies
+
+# Web Framework
 fastapi>=0.100.0
 uvicorn>=0.23.0
 python-multipart
+
+# ML / AI
 torch
 transformers
 pillow
+
+# Vector Database
 numpy
-faiss-cpu
+faiss-cpu  # Use faiss-gpu on GPU instances
+
+# Video Processing
 opencv-python-headless
-pytest
-httpx
+
+# Audio Processing
 scipy
 pydub
 librosa
 
+# URL Downloads (TikTok, YouTube, etc.)
+yt-dlp
+curl-cffi
+
+# Testing
+pytest
+httpx
