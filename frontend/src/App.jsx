@@ -11,6 +11,7 @@ function App() {
   const [error, setError] = useState(null)
   const [url, setUrl] = useState('')
   const [isDragging, setIsDragging] = useState(false)
+  const [audioOnly, setAudioOnly] = useState(false)
   const fileInputRef = useRef(null)
 
   const handleFileChange = (selectedFile) => {
@@ -18,6 +19,12 @@ function App() {
       setFile(selectedFile)
       setResult(null)
       setError(null)
+      
+      // Auto-detect if it's an audio-only file
+      const filename = selectedFile.name.toLowerCase()
+      const audioExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma']
+      const isAudioFile = audioExtensions.some(ext => filename.endsWith(ext))
+      setAudioOnly(isAudioFile)
     }
   }
 
@@ -55,6 +62,7 @@ function App() {
     
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('audio_only', audioOnly.toString())
     
     try {
       const response = await axios.post('http://localhost:8000/api/v1/identify', formData, {
@@ -77,7 +85,29 @@ function App() {
       setError("Please enter a URL")
       return
     }
-    setError("URL support coming soon!")
+    
+    setLoading(true)
+    setError(null)
+    setResult(null)
+    
+    const formData = new FormData()
+    formData.append('url', url.trim())
+    formData.append('audio_only', audioOnly.toString())
+    
+    try {
+      const response = await axios.post('http://localhost:8000/api/v1/identify', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        },
+        timeout: 300000
+      })
+      setResult(response.data)
+    } catch (err) {
+      console.error(err)
+      setError(err.response?.data?.detail || "An error occurred during identification.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -118,6 +148,18 @@ function App() {
               {file && (
                 <p className="file-name">{file.name}</p>
               )}
+            </div>
+
+            <div className="audio-only-toggle" style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px', color: '#888' }}>
+                <input
+                  type="checkbox"
+                  checked={audioOnly}
+                  onChange={(e) => setAudioOnly(e.target.checked)}
+                  style={{ marginRight: '8px', width: '18px', height: '18px', cursor: 'pointer' }}
+                />
+                Audio Only
+              </label>
             </div>
 
             <button 
