@@ -60,3 +60,4 @@ echo "Check audio database status:"
 echo "  cd backend && python3 check_audio_db.py"
 echo "============================================================"
 
+
