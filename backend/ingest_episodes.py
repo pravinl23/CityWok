@@ -153,7 +153,6 @@ def ingest_directory(directory: str, api_url: str = "http://localhost:8000", ski
                 # For audio-only, check audio database instead
                 from app.services.audio_fingerprint import audio_matcher
                 import pickle
-                import os
                 from app.core.config import settings
                 audio_db_path = os.path.join(settings.DATA_DIR, "audio_fingerprints.pkl")
                 if os.path.exists(audio_db_path):
