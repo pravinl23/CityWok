@@ -11,7 +11,6 @@ function App() {
   const [error, setError] = useState(null)
   const [url, setUrl] = useState('')
   const [isDragging, setIsDragging] = useState(false)
-  const [audioOnly, setAudioOnly] = useState(false)
   const fileInputRef = useRef(null)
 
   const handleFileChange = (selectedFile) => {
@@ -19,12 +18,6 @@ function App() {
       setFile(selectedFile)
       setResult(null)
       setError(null)
-      
-      // Auto-detect if it's an audio-only file
-      const filename = selectedFile.name.toLowerCase()
-      const audioExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma']
-      const isAudioFile = audioExtensions.some(ext => filename.endsWith(ext))
-      setAudioOnly(isAudioFile)
     }
   }
 
@@ -62,7 +55,6 @@ function App() {
     
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('audio_only', audioOnly.toString())
     
     try {
       const response = await axios.post('http://localhost:8000/api/v1/identify', formData, {
@@ -92,7 +84,6 @@ function App() {
     
     const formData = new FormData()
     formData.append('url', url.trim())
-    formData.append('audio_only', audioOnly.toString())
     
     try {
       const response = await axios.post('http://localhost:8000/api/v1/identify', formData, {
@@ -150,17 +141,6 @@ function App() {
               )}
             </div>
 
-            <div className="audio-only-toggle" style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px', color: '#888' }}>
-                <input
-                  type="checkbox"
-                  checked={audioOnly}
-                  onChange={(e) => setAudioOnly(e.target.checked)}
-                  style={{ marginRight: '8px', width: '18px', height: '18px', cursor: 'pointer' }}
-                />
-                Audio Only
-              </label>
-            </div>
 
             <button 
               className="upload-btn"
@@ -200,52 +180,20 @@ function App() {
                       <p className="result-episode">Episode: {result.episode}</p>
                       <p className="result-timestamp">Time: {result.timestamp}</p>
                       <div className="result-details">
-                        <small>Confidence: {result.details?.confidence}</small>
-                        <br/>
-                        <small>Method: {result.details?.method || 'hybrid'}</small>
+                        <small>Confidence: {result.confidence}</small>
+                        {result.aligned_matches && (
+                          <>
+                            <br/>
+                            <small>Matched: {result.aligned_matches} fingerprints</small>
+                          </>
+                        )}
                       </div>
-                    </div>
-
-                    <div className="method-results">
-                      {result.visual_result && (
-                        <div className="method-item">
-                          <strong>Visual Match:</strong><br/>
-                          {result.visual_result.episode} @ {result.visual_result.timestamp}<br/>
-                          <small>(Conf: {result.visual_result.confidence})</small>
-                        </div>
-                      )}
-                      
-                      {result.audio_result && (
-                        <div className="method-item">
-                          <strong>Audio Match:</strong><br/>
-                          {result.audio_result.episode} @ {result.audio_result.timestamp}<br/>
-                          <small>(Conf: {result.audio_result.confidence})</small>
-                        </div>
-                      )}
                     </div>
                   </>
                 ) : (
                   <div className="no-match">
                     <h3>No Match Found</h3>
                     <p>{result.message}</p>
-                    {(result.visual_result || result.audio_result) && (
-                      <div className="method-results" style={{marginTop: '15px'}}>
-                        {result.visual_result && (
-                          <div className="method-item" style={{opacity: 0.7}}>
-                            <strong>Best Guess (Visual):</strong><br/>
-                            {result.visual_result.episode} @ {result.visual_result.timestamp}<br/>
-                            <small>(Conf: {result.visual_result.confidence})</small>
-                          </div>
-                        )}
-                        {result.audio_result && (
-                          <div className="method-item" style={{opacity: 0.7}}>
-                            <strong>Best Guess (Audio):</strong><br/>
-                            {result.audio_result.episode} @ {result.audio_result.timestamp}<br/>
-                            <small>(Conf: {result.audio_result.confidence})</small>
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
