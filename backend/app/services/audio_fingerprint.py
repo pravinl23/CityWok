@@ -333,7 +333,8 @@ class AudioFingerprinter:
         print(f"Best match: {best_episode} with {best_count} aligned hashes at offset {best_offset:.1f}s")
         
         # Require minimum aligned matches to avoid false positives
-        min_aligned = max(15, len(filtered_prints) * 0.05)  # At least 5% or 15 matches
+        # Lower threshold: at least 10 matches or 3% of query hashes
+        min_aligned = max(10, len(filtered_prints) * 0.03)  # At least 3% or 10 matches
         
         if best_episode and best_count >= min_aligned:
             confidence = min(99, int((best_count / len(filtered_prints)) * 100))
