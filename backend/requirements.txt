@@ -5,22 +5,10 @@ fastapi>=0.100.0
 uvicorn>=0.23.0
 python-multipart
 
-# ML / AI
-torch
-transformers
-pillow
-
-# Vector Database
-numpy
-faiss-cpu  # Use faiss-gpu on GPU instances
-
-# Video Processing
-opencv-python-headless
-
 # Audio Processing
 scipy
-pydub
 librosa
+numpy
 
 # URL Downloads (TikTok, YouTube, etc.)
 yt-dlp

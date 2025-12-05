@@ -1,15 +1,14 @@
 # CityWok - Docker Compose Configuration
 # 
 # Usage:
-#   CPU: docker-compose up api
-#   GPU: docker-compose up api-gpu
+#   docker-compose up api
 #
 # For production, set environment variables in .env file
 
 version: '3.8'
 
 services:
-  # CPU-only deployment (works anywhere)
+  # API service (audio-only, CPU is fine)
   api:
     build:
       context: ./backend
@@ -18,41 +17,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/data:/app/data
+      # For production: mount persistent volume instead
+      # - /mnt/data:/app/data
     environment:
-      - TRANSFORMERS_CACHE=/app/data/cache
+      - DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
-
-  # GPU deployment (requires NVIDIA Docker)
-  api-gpu:
-    build:
-      context: ./backend
-      target: gpu
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend/data:/app/data
-    environment:
-      - TRANSFORMERS_CACHE=/app/data/cache
-      - PYTHONUNBUFFERED=1
-      - CUDA_VISIBLE_DEVICES=0
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    restart: unless-stopped
-
-  # Redis cache (optional - for caching frequent queries)
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
-volumes:
-  redis_data:
