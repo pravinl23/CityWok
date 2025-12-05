@@ -169,14 +169,9 @@ def ingest_directory(directory: str, api_url: str = "http://localhost:8000", ski
                 else:
                     print("No audio fingerprint database found. Will process all episodes.")
             else:
-                # For video, check video database
-                from app.services.vector_db import vector_db
-                from collections import Counter
-                episode_counts = Counter()
-                for meta in vector_db.metadata.values():
-                    ep_id = meta.get('episode_id', 'unknown')
-                    episode_counts[ep_id] += 1
-                already_ingested = set(episode_counts.keys())
+                # Audio-only mode: check audio database
+                from app.services.audio_fingerprint import audio_matcher
+                already_ingested = set(audio_matcher.episode_hash_counts.keys()) if hasattr(audio_matcher, 'episode_hash_counts') else set()
                 if already_ingested:
                     print(f"Found {len(already_ingested)} already ingested episodes: {sorted(already_ingested)}")
         except Exception as e:

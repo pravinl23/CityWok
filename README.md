@@ -1,18 +1,17 @@
 # CityWok 🍜
 
-**Identify South Park episodes from video clips using AI.**
+**Identify South Park episodes from audio/video clips using audio fingerprinting.**
 
-Upload a TikTok, YouTube clip, or any video file and CityWok will tell you which episode it's from and the exact timestamp.
+Upload a TikTok, YouTube clip, or any audio/video file and CityWok will tell you which episode it's from and the exact timestamp.
 
 ## Features
 
-- 🎬 **Visual Analysis**: CLIP embeddings with keyframe extraction (50-150 frames vs 1800/min)
-- 🎵 **Audio Fingerprinting**: Shazam-style spectral peak landmarks
-- 🔀 **Hybrid Confirmation**: Cross-verifies both modalities for high accuracy
-- 🚀 **GPU Accelerated**: CUDA (AWS) and MPS (Mac) support
-- 🐳 **Docker Ready**: Deploy to AWS/GCP with one command
+- 🎵 **Audio Fingerprinting**: Shazam-style spectral peak landmark matching
+- 🔄 **Auto-Conversion**: All files automatically converted to MP3 for consistent processing
+- 🌐 **URL Support**: Direct TikTok, YouTube, and other platform URL support
+- 🚀 **Fast & Accurate**: Optimized hash matching with early termination
 
-## Quick Start (Local)
+## Quick Start
 
 ```bash
 # Backend
@@ -36,92 +35,27 @@ Open http://localhost:5173
 cd backend
 source venv/bin/activate
 
-# Single season
-python ingest_episodes.py "/path/to/Season 1" 1
+# Single episode
+python ingest_episodes.py "/path/to/S01E01.mp4" "S01E01"
+
+# Entire season
+python ingest_audio_sequential.py "/path/to/Season 1" 1
 
 # Multiple seasons
-python ingest_episodes.py "/path/to/Season 1" 1 "/path/to/Season 2" 2
-
-# Audio-only (if video already ingested)
-python ingest_episodes.py "/path/to/Season 1" 1 --audio-only
+python ingest_audio_sequential.py "/path/to/Season 1" 1 "/path/to/Season 2" 2
 ```
-
-## Deploy to AWS
-
-### Option 1: Docker (Recommended)
-
-```bash
-# CPU deployment
-docker-compose up api
-
-# GPU deployment (requires nvidia-docker)
-docker-compose up api-gpu
-```
-
-### Option 2: EC2 / ECS
-
-1. Build and push to ECR:
-```bash
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin YOUR_ACCOUNT.dkr.ecr.us-east-1.amazonaws.com
-docker build -t citywok-api backend/
-docker tag citywok-api:latest YOUR_ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/citywok-api:latest
-docker push YOUR_ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/citywok-api:latest
-```
-
-2. Deploy to ECS or run on EC2:
-```bash
-docker run -p 8000:8000 -v $(pwd)/data:/app/data YOUR_ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/citywok-api:latest
-```
-
-### GPU Instance Recommendations
-
-| Use Case | Instance | Cost |
-|----------|----------|------|
-| Dev/Test | g4dn.xlarge | ~$0.50/hr |
-| Production | g5.xlarge | ~$1.00/hr |
-| High Traffic | g5.2xlarge | ~$2.00/hr |
 
 ## API Endpoints
 
 ```
-POST /api/v1/identify    - Identify episode from video/audio file or URL
+POST /api/v1/identify    - Identify episode from audio/video file or URL
 POST /api/v1/ingest      - Add episode to database
 GET  /api/v1/stats       - Database statistics
 GET  /api/v1/test        - Health check
 ```
 
-## Architecture
-
-```
-┌─────────────┐     ┌─────────────────────────────────────────┐
-│   Client    │────▶│              FastAPI                    │
-└─────────────┘     │  ┌─────────────────────────────────────┐│
-                    │  │      /identify Endpoint             ││
-                    │  │  ┌─────────┐    ┌────────────────┐  ││
-                    │  │  │ Visual  │    │     Audio      │  ││
-                    │  │  │ (CLIP)  │    │ (Fingerprint)  │  ││
-                    │  │  └────┬────┘    └───────┬────────┘  ││
-                    │  │       └──────┬──────────┘           ││
-                    │  │         Hybrid Fusion               ││
-                    │  └─────────────────────────────────────┘│
-                    │  ┌────────────┐  ┌─────────────────────┐│
-                    │  │ FAISS IVF  │  │ Spectral Peak DB   ││
-                    │  │ Vector DB  │  │ (Inverted Index)   ││
-                    │  └────────────┘  └─────────────────────┘│
-                    └─────────────────────────────────────────┘
-```
-
-## Performance
-
-| Metric | Value |
-|--------|-------|
-| Ingestion | ~2 min/episode (GPU) |
-| Query Time | <500ms (CPU), <100ms (GPU) |
-| Accuracy | ~95% on clean clips, ~85% on TikTok edits |
-| Storage | ~10MB per episode |
-
 ## Tech Stack
 
-- **Backend**: FastAPI, PyTorch, CLIP, FAISS, librosa
+- **Backend**: FastAPI, librosa, scipy, numpy
 - **Frontend**: React, Vite
-- **Deployment**: Docker, AWS ECS/EC2
+- **Audio Processing**: Shazam-style spectral peak fingerprinting
