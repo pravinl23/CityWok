@@ -368,6 +368,131 @@ class AudioFingerprinter:
         else:
             print(f"   ⏳ Deferred save ({self.unsaved_episodes[db_file]}/{self.save_batch_size} episodes)")
 
+    def match_audio_array(self, audio_array: np.ndarray, sr: int) -> Dict[str, Any]:
+        """
+        Match an audio array against all databases.
+        Same as match_clip but works with audio array directly (no file I/O).
+        """
+        print("🔍 Fingerprinting query clip from array...")
+        
+        # Generate fingerprints from array
+        peaks = self._get_spectrogram_peaks(audio_array)
+        query_prints = self._create_hashes(peaks)
+        
+        if not query_prints:
+            print("No fingerprints found in query.")
+            return {}
+        
+        print(f"   Generated {len(query_prints)} query fingerprints")
+        
+        # Load all databases and combine fingerprints for matching
+        print("📂 Loading databases for matching...")
+        all_fingerprints = self._get_all_fingerprints()
+        
+        if not all_fingerprints:
+            print("Audio database is empty.")
+            return {}
+        
+        print(f"   Searching across {len(self.loaded_dbs)} loaded database(s)")
+        print(f"   Database has {len(all_fingerprints):,} unique hashes")
+        
+        # Check how many query hashes exist in database
+        found_in_db = sum(1 for h, _ in query_prints if h in all_fingerprints)
+        print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
+        
+        # OPTIMIZATION 1: Filter out overly common hashes (appear in >10 episodes)
+        max_episodes_per_hash = 10
+        filtered_prints = []
+        skipped_common = 0
+        for h, t_query in query_prints:
+            if h in all_fingerprints:
+                if len(all_fingerprints[h]) > max_episodes_per_hash:
+                    skipped_common += 1
+                    continue
+                filtered_prints.append((h, t_query))
+        
+        if skipped_common > 0:
+            print(f"⏭️  Skipped {skipped_common} overly common hashes (appear in >{max_episodes_per_hash} episodes)")
+        
+        print(f"   After filtering: {len(filtered_prints)} query hashes to search")
+        
+        # Sample if too many
+        max_query_hashes = 10000
+        if len(filtered_prints) > max_query_hashes:
+            step = len(filtered_prints) // max_query_hashes
+            filtered_prints = filtered_prints[::step]
+            print(f"📊 Sampling: Using {len(filtered_prints)} of {len(query_prints)} query hashes")
+        
+        print(f"Searching {len(filtered_prints)} query hashes against {len(all_fingerprints)} DB hashes...")
+        
+        # Find matches
+        matches: Dict[str, List[float]] = defaultdict(list)
+        match_count = 0
+        
+        for h, t_query in filtered_prints:
+            if h in all_fingerprints:
+                for ep_id, t_db in all_fingerprints[h]:
+                    offset = t_db - t_query
+                    matches[ep_id].append(offset)
+                    match_count += 1
+        
+        print(f"Found {match_count} raw hash matches across {len(matches)} episodes")
+        
+        if not matches:
+            return {}
+        
+        # Find best match using time-aligned voting
+        best_episode = None
+        best_count = 0
+        best_offset = 0.0
+        
+        sorted_episodes = sorted(matches.items(), key=lambda x: len(x[1]), reverse=True)
+        
+        for ep_id, offsets in sorted_episodes:
+            if len(offsets) < 5:
+                continue
+            
+            if len(offsets) > 5000:
+                offsets = offsets[:5000]
+            
+            binned = [round(o * 2) / 2 for o in offsets]
+            counts = Counter(binned)
+            
+            if not counts:
+                continue
+            
+            mode_offset, count = counts.most_common(1)[0]
+            
+            if count > best_count:
+                best_count = count
+                best_episode = ep_id
+                best_offset = mode_offset
+            
+            # Early termination
+            if best_count > 100 and len(sorted_episodes) > 1:
+                next_ep_id, next_offsets = sorted_episodes[1]
+                if len(next_offsets) < best_count / 3:
+                    print(f"✓ Early termination: Clear winner found ({best_count} vs max {len(next_offsets)})")
+                    break
+        
+        print(f"Best match: {best_episode} with {best_count} aligned hashes at offset {best_offset:.1f}s")
+        
+        # Require minimum aligned matches
+        min_aligned = max(5, len(filtered_prints) * 0.01)
+        
+        if best_episode and best_count >= min_aligned:
+            confidence = min(99, int((best_count / len(filtered_prints)) * 100))
+            return {
+                "episode_id": best_episode,
+                "timestamp": max(0, best_offset),
+                "confidence": confidence,
+                "aligned_matches": best_count,
+                "total_matches": match_count,
+                "method": "audio"
+            }
+        
+        return {}
+
     def match_clip(self, file_path: str) -> Dict[str, Any]:
         """
         Match a query clip against all databases.
