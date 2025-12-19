@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:  # Allow manual triggers
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -14,13 +14,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Deploy to Railway
-        uses: bervProject/railway-deploy@main
-        with:
-          railway_token: ${{ secrets.RAILWAY_TOKEN }}
-          service: backend
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
 
-      - name: Deployment complete
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          echo "✅ Deployed to Railway"
-          echo "Backend service has been updated"
+          railway link --service backend || true
+          railway up --service backend
