@@ -1,6 +1,6 @@
-# 🚀 Quick Deployment Guide - CityWok
+# 🚀 Deployment Guide - CityWok
 
-## Option 1: Deploy with Pickle Files (Fastest - Use This First!)
+## Deploy with Pickle Files
 
 Since you already have all 20 seasons in pickle format and the system is working, you can deploy immediately.
 
@@ -34,16 +34,8 @@ git push origin main
 2. Add these variables:
 
 ```
-# Use pickle mode (your existing databases)
 USE_LMDB=false
-
-# Data directory
 DATA_DIR=/app/data
-
-# Load all 20 seasons (remove MAX_SEASONS to load all)
-# MAX_SEASONS=20  # Optional: uncomment to explicitly set
-
-# Python settings
 PYTHONUNBUFFERED=1
 ```
 

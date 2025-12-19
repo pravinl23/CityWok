@@ -1,18 +1,4 @@
-"""
-Audio Fingerprinting Service
-
-Implements Shazam-style spectral peak landmark fingerprinting:
-1. Convert audio to spectrogram
-2. Find local maxima (peaks) in time-frequency space
-3. Create "constellation map" of peaks
-4. Hash pairs of peaks with their relative timing
-5. Store in inverted index for fast lookup
-
-This is much more robust than simple chroma N-grams because:
-- Peaks survive noise, compression, and volume changes
-- Time-aligned pairs eliminate false positives
-- O(1) hash lookup instead of O(N) comparison
-"""
+"""Audio Fingerprinting Service - Shazam-style spectral peak landmark fingerprinting"""
 
 import os
 import re
@@ -27,12 +13,7 @@ from app.core.config import settings
 
 
 class AudioFingerprinter:
-    """
-    Shazam-style audio fingerprinting with spectral peak landmarks.
-
-    Supports multiple database files with eager loading at startup.
-    Each season has its own database file for easier management.
-    """
+    """Shazam-style audio fingerprinting with spectral peak landmarks."""
     
     # Database configuration: season_number -> database_filename
     # Each season gets its own database file (audio_fingerprints_sXX.pkl)

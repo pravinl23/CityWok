@@ -1,0 +1,14 @@
+.env
+*.md
+*.txt
+*.pdf
+*.docx
+*.doc
+*.xls
+*.xlsx
+*.pptx
+*.ppt
+*.odt
+*.ods
+*.odp
+*.odg

@@ -1,9 +1,4 @@
-"""
-
-CityWok API Endpoints - Audio-Only Identification
-
-Uses Shazam-style spectral peak fingerprinting for episode identification.
-"""
+"""CityWok API Endpoints - Audio-Only Identification"""
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
 from typing import Dict, Any, Optional

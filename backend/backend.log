@@ -1,59 +1,0 @@
-INFO:     Started server process [59116]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-🔧 Using pickle mode for audio fingerprinting (legacy)
-   (Batch saving: every 5 episodes to optimize performance)
-   ℹ️  Database loading disabled - will load lazily when needed
-   ⚠️  MAX_SEASONS=3 - only loading seasons 1-3
-============================================================
-CityWok API - Startup
-============================================================
-
-🔧 Using pickle mode (legacy)
-============================================================
-✓ Startup complete!
-============================================================
-INFO:     127.0.0.1:60086 - "GET /api/v1/test HTTP/1.1" 200 OK
-[TikTok] Extracting URL: https://www.tiktok.com/@tik_tok_cliped/video/7209768566252490026?is_from_webapp=1&sender_device=p...=7493733278417389111
-📥 Downloading from URL: https://www.tiktok.com/@tik_tok_cliped/video/7209768566252490026?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111
-   Starting download (timeout: 120s)...
-[TikTok] 7209768566252490026: Downloading webpage
-[info] 7209768566252490026: Downloading 1 format(s): bytevc1_720p_666650-1
-[download] Destination: /var/folders/bv/4r9z7w2x0pq_c9m_z0p2jy8h0000gn/T/tmpyfp53skw.mp4
-[download]   0.0% of    4.81MiB at  893.55KiB/s ETA 00:05[download]   0.1% of    4.81MiB at  557.93KiB/s ETA 00:08   Download progress: 0.0% (0.0 MB / 4.8 MB)
-[download]   0.1% of    4.81MiB at    1.18MiB/s ETA 00:04   Download progress: 0.1% (0.0 MB / 4.8 MB)
-[download]   0.3% of    4.81MiB at    2.40MiB/s ETA 00:02   Download progress: 0.1% (0.0 MB / 4.8 MB)
-[download]   0.6% of    4.81MiB at    3.14MiB/s ETA 00:01   Download progress: 0.3% (0.0 MB / 4.8 MB)
-[download]   1.3% of    4.81MiB at    4.96MiB/s ETA 00:00   Download progress: 0.6% (0.0 MB / 4.8 MB)
-[download]   2.6% of    4.81MiB at    5.08MiB/s ETA 00:00   Download progress: 1.3% (0.1 MB / 4.8 MB)
-[download]   5.2% of    4.81MiB at    7.10MiB/s ETA 00:00   Download progress: 2.6% (0.1 MB / 4.8 MB)
-[download]  10.4% of    4.81MiB at    5.15MiB/s ETA 00:00   Download progress: 5.2% (0.2 MB / 4.8 MB)
-[download]  20.8% of    4.81MiB at    8.08MiB/s ETA 00:00   Download progress: 10.4% (0.5 MB / 4.8 MB)
-[download]  41.5% of    4.81MiB at    7.77MiB/s ETA 00:00   Download progress: 20.8% (1.0 MB / 4.8 MB)
-[download]  83.1% of    4.81MiB at    8.36MiB/s ETA 00:00   Download progress: 41.5% (2.0 MB / 4.8 MB)
-[download] 100.0% of    4.81MiB at    8.41MiB/s ETA 00:00   Download progress: 83.1% (4.0 MB / 4.8 MB)
-[download] 100% of    4.81MiB in 00:00:00 at 7.55MiB/s      Download progress: 100.0% (4.8 MB / 4.8 MB)
-
-   ✓ Download complete
-🎵 Processing: https://www.tiktok.com/@tik_tok_cliped/video/72097 (4.8 MB)
-🔄 Converting to MP3: tmpyfp53skw.mp4
-✓ Converted to MP3: tmpyfp53skw.mp3
-🔍 Fingerprinting query clip...
-🎵 Fingerprinting: tmpyfp53skw.mp3
-   Duration: 60.6s
-   Found 2873 spectral peaks
-   Generated 42975 fingerprint hashes
-📂 Loading databases for matching...
-📂 Loading database: audio_fingerprints_s01.pkl...
-   ✓ Loaded 122418 unique hashes from audio_fingerprints_s01.pkl
-📂 Loading database: audio_fingerprints_s02.pkl...
-   ✓ Loaded 156726 unique hashes from audio_fingerprints_s02.pkl
-📂 Loading database: audio_fingerprints_s03.pkl...
-   ✓ Loaded 140665 unique hashes from audio_fingerprints_s03.pkl
-   Searching across 20 database(s)
-⏭️  Skipped 42534 overly common hashes (appear in >10 episodes)
-Searching 413 query hashes against 192870 DB hashes...
-Found 1914 raw hash matches across 47 episodes
-Best match: S01E01 with 122 aligned hashes at offset 1058.5s
-INFO:     127.0.0.1:60112 - "POST /api/v1/identify HTTP/1.1" 200 OK

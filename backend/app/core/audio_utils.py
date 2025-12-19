@@ -92,7 +92,6 @@ def extract_audio_from_upload(
         Exception: If FFmpeg fails or file is too large
     """
     # Read uploaded file into memory
-    # Note: For very large files (>500MB), consider streaming or temp file fallback
     try:
         file_bytes = file.file.read()
     except Exception as e:
