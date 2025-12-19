@@ -212,7 +212,10 @@ async def test_endpoint():
 async def get_stats():
     """Get database statistics."""
     if AUDIO_AVAILABLE and audio_matcher:
-        return {"audio_db": audio_matcher.get_stats()}
+        try:
+            return {"audio_db": audio_matcher.get_stats()}
+        except Exception as e:
+            return {"error": f"Failed to get stats: {str(e)}", "message": "Service may be loading databases"}
     return {"error": "Audio service not available"}
 
 
