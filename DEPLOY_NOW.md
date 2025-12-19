@@ -66,6 +66,8 @@ railway login
 cd /Users/pravinlohani/Projects/CityWok
 railway link
 
+
+
 # Upload databases
 cd backend/data
 railway run --service api -- sh -c "mkdir -p /app/data && echo 'Volume ready'"
