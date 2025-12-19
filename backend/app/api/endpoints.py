@@ -22,6 +22,7 @@ try:
     else:
         print("🔧 Using pickle mode for audio fingerprinting (legacy)")
         from app.services.audio_fingerprint import audio_matcher
+        from app.core.audio_utils import extract_audio_to_memory
         AUDIO_AVAILABLE = True
         MEMORY_MODE = False
 except ImportError as e:
