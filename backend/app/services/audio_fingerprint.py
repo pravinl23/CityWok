@@ -52,7 +52,6 @@ class AudioFingerprinter:
         self._scan_databases()
         
         # Eagerly load all databases at startup for instant responses
-        # This loads everything into memory upfront
         EAGER_LOAD = os.getenv('EAGER_LOAD_DB', 'true').lower() in ('true', '1', 'yes')
         if EAGER_LOAD:
             print(f"📦 Eager loading all databases into memory at startup...")
@@ -529,8 +528,7 @@ class AudioFingerprinter:
         found_in_db = sum(1 for h, _ in query_prints if h in all_fingerprints)
         print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
         
-        # OPTIMIZATION 1: Filter out overly common hashes (appear in >10 episodes)
-        # These are likely noise and slow down matching
+        # Filter out overly common hashes (appear in >10 episodes)
         max_episodes_per_hash = 10
         filtered_prints = []
         skipped_common = 0
@@ -547,8 +545,7 @@ class AudioFingerprinter:
         
         print(f"   After filtering: {len(filtered_prints)} query hashes to search")
         
-        # OPTIMIZATION 2: Sample query hashes if too many (use every Nth hash)
-        # This speeds up long clips without losing accuracy
+        # Sample query hashes if too many
         max_query_hashes = 10000
         if len(filtered_prints) > max_query_hashes:
             step = len(filtered_prints) // max_query_hashes
@@ -574,7 +571,7 @@ class AudioFingerprinter:
             return {}
         
         # Find best match using time-aligned voting
-        # OPTIMIZATION 3: Early termination - stop if we find a clear winner
+        # Early termination if clear winner found
         best_episode = None
         best_count = 0
         best_offset = 0.0
@@ -586,8 +583,7 @@ class AudioFingerprinter:
             if len(offsets) < 5:  # Need minimum matches
                 continue
             
-            # OPTIMIZATION 4: Limit offset processing for speed
-            # Only process first 5000 offsets per episode (enough for alignment)
+            # Limit offset processing (first 5000 per episode)
             if len(offsets) > 5000:
                 offsets = offsets[:5000]
             
@@ -609,8 +605,7 @@ class AudioFingerprinter:
                 best_episode = ep_id
                 best_offset = mode_offset
             
-            # OPTIMIZATION 5: Early termination if we have a clear winner
-            # If best match is 3x better than next best, we're done
+            # Early termination if clear winner (3x better than next)
             if best_count > 100 and len(sorted_episodes) > 1:
                 # Check if next episode could beat us
                 next_ep_id, next_offsets = sorted_episodes[1]

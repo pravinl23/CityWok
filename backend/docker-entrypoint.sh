@@ -80,9 +80,13 @@ else
     echo "🔧 Pickle mode enabled (legacy)"
     
     # Check if pickle databases need to be downloaded from R2/S3
+    # Only download if files don't already exist (volume persistence)
+    pickle_count=$(ls -1 ${DATA_DIR}/audio_fingerprints_s*.pkl 2>/dev/null | wc -l | tr -d ' ')
+    
     if [ -n "$DOWNLOAD_PICKLE_DB" ] && [ "$DOWNLOAD_PICKLE_DB" = "true" ]; then
-        if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
-            echo "📦 Checking for pickle databases in R2/S3..."
+        if [ "$pickle_count" -lt 20 ] && [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "📦 Downloading missing pickle databases from R2/S3..."
+            echo "   Found $pickle_count existing files, downloading missing ones..."
             
             mkdir -p "$DATA_DIR"
             
@@ -105,21 +109,28 @@ s3 = boto3.client(
     region_name='auto'
 )
 
-# List and download pickle files
+# List and download pickle files (skip if already exists)
 try:
     response = s3.list_objects_v2(Bucket=bucket, Prefix=prefix + '/')
     if 'Contents' in response:
         downloaded = 0
+        skipped = 0
         for obj in response['Contents']:
             key = obj['Key']
             filename = key.split('/')[-1]
             if filename.endswith('.pkl'):
                 local_path = os.path.join(data_dir, filename)
+                if os.path.exists(local_path):
+                    skipped += 1
+                    continue
                 print(f'  Downloading {filename}...', end=' ', flush=True)
                 s3.download_file(bucket, key, local_path)
                 print('✓')
                 downloaded += 1
-        print(f'✓ Downloaded {downloaded} pickle database files')
+        if downloaded > 0:
+            print(f'✓ Downloaded {downloaded} pickle database files')
+        if skipped > 0:
+            print(f'⏭️  Skipped {skipped} files (already exist)')
     else:
         print('  No pickle files found in R2')
 except Exception as e:

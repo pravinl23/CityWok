@@ -12,3 +12,5 @@
 *.ods
 *.odp
 *.odg
+*.log
+backend.log
