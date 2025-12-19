@@ -14,6 +14,14 @@ numpy
 yt-dlp
 curl-cffi
 
+# LMDB Storage (for production deployment)
+lmdb>=1.4.0
+xxhash>=3.0.0
+zstandard>=0.21.0
+
+# Cloud Storage (S3/R2/GCS)
+boto3>=1.28.0
+
 # Testing
 pytest
 httpx

@@ -166,7 +166,7 @@ function App() {
                 disabled={!url.trim()}
               >
                 FIND IT
-              </button>
+        </button>
             </div>
 
             {error && <div className="error-message">{error}</div>}

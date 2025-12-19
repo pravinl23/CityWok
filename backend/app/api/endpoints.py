@@ -14,14 +14,26 @@ import tempfile
 import subprocess
 from app.core.config import settings
 
-# Audio fingerprinting
+# Audio fingerprinting - support both pickle and LMDB modes
+USE_LMDB = os.getenv('USE_LMDB', 'false').lower() in ('true', '1', 'yes')
+
 try:
-    from app.services.audio_fingerprint import audio_matcher
-    AUDIO_AVAILABLE = True
-except ImportError:
+    if USE_LMDB:
+        print("🔧 Using LMDB mode for audio fingerprinting")
+        from app.services.audio_fingerprint_lmdb import audio_matcher_lmdb as audio_matcher
+        from app.core.audio_utils import extract_audio_from_upload, extract_audio_to_memory, extract_audio_from_bytes
+        AUDIO_AVAILABLE = True
+        MEMORY_MODE = True
+    else:
+        print("🔧 Using pickle mode for audio fingerprinting (legacy)")
+        from app.services.audio_fingerprint import audio_matcher
+        AUDIO_AVAILABLE = True
+        MEMORY_MODE = False
+except ImportError as e:
+    print(f"Error: Audio fingerprinting not available: {e}")
     AUDIO_AVAILABLE = False
+    MEMORY_MODE = False
     audio_matcher = None
-    print("Error: Audio fingerprinting not available")
 
 # URL downloading
 try:
@@ -53,29 +65,70 @@ def download_video_from_url(url: str) -> str:
     tmp.close()
     os.remove(tmp_path)
     
+    def progress_hook(d):
+        """Progress callback for yt-dlp."""
+        if d['status'] == 'downloading':
+            downloaded = d.get('downloaded_bytes', 0)
+            total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            if total > 0:
+                percent = (downloaded / total) * 100
+                print(f"   Download progress: {percent:.1f}% ({downloaded / 1024 / 1024:.1f} MB / {total / 1024 / 1024:.1f} MB)")
+        elif d['status'] == 'finished':
+            print(f"   ✓ Download complete")
+    
     ydl_opts = {
         'outtmpl': tmp_path,
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,  # Show progress
+        'no_warnings': False,
         'format': 'best[ext=mp4]/best',
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': url,
-        }
+        },
+        'progress_hooks': [progress_hook],
+        'socket_timeout': 30,  # 30 second socket timeout
+        'noplaylist': True,
     }
     
     try:
-        with YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        print(f"   Starting download (timeout: 120s)...")
+        import threading
+        import time
+        
+        download_complete = threading.Event()
+        download_error = [None]
+        
+        def download_thread():
+            try:
+                with YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                download_complete.set()
+            except Exception as e:
+                download_error[0] = e
+                download_complete.set()
+        
+        thread = threading.Thread(target=download_thread, daemon=True)
+        thread.start()
+        
+        # Wait up to 120 seconds
+        if not download_complete.wait(timeout=120):
+            raise HTTPException(status_code=408, detail="Download timeout after 120 seconds - URL may be slow or unavailable")
+        
+        if download_error[0]:
+            raise download_error[0]
         
         if not os.path.exists(tmp_path):
             raise HTTPException(status_code=400, detail="Failed to download from URL")
             
         return tmp_path
+    except HTTPException:
+        raise
     except Exception as e:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
-        raise HTTPException(status_code=400, detail=f"Download failed: {str(e)}")
+        error_msg = str(e)
+        print(f"   ❌ Download error: {error_msg}")
+        raise HTTPException(status_code=400, detail=f"Download failed: {error_msg}")
 
 
 def format_time(seconds: float) -> str:
@@ -223,17 +276,28 @@ async def identify_episode(
             raise HTTPException(status_code=400, detail="File too large (max 100MB)")
         
         print(f"🎵 Processing: {source_name} ({file_size / (1024*1024):.1f} MB)")
-        
-        # Convert to MP3 for consistent processing
-        audio_path = convert_to_mp3(temp_path)
-        
-        # Schedule cleanup (both original and converted if different)
-        background_tasks.add_task(cleanup_file, audio_path)
-        if audio_path != temp_path:
+
+        # LMDB mode: extract audio to memory (no temp files)
+        if MEMORY_MODE:
+            print("   Using memory-based processing (no temp MP3 files)")
+            audio_array, sr = extract_audio_to_memory(temp_path, sr=22050)
+
+            # Schedule cleanup of original file
             background_tasks.add_task(cleanup_file, temp_path)
-        
-        # Run audio analysis on MP3
-        result = audio_matcher.match_clip(audio_path)
+
+            # Run audio analysis on array
+            result = audio_matcher.match_audio_array(audio_array, sr)
+        else:
+            # Legacy mode: convert to MP3 for consistent processing
+            audio_path = convert_to_mp3(temp_path)
+
+            # Schedule cleanup (both original and converted if different)
+            background_tasks.add_task(cleanup_file, audio_path)
+            if audio_path != temp_path:
+                background_tasks.add_task(cleanup_file, temp_path)
+
+            # Run audio analysis on MP3
+            result = audio_matcher.match_clip(audio_path)
         
         if result and result.get('episode_id'):
             return {
@@ -308,4 +372,13 @@ async def clear_audio_db():
     if AUDIO_AVAILABLE and audio_matcher:
         audio_matcher.clear_db()
         return {"status": "success", "message": "Audio database cleared"}
+    return {"status": "error", "message": "Audio service not available"}
+
+
+@router.post("/admin/force-save-databases")
+async def force_save_databases():
+    """Force save all databases (useful at end of ingestion)."""
+    if AUDIO_AVAILABLE and audio_matcher:
+        audio_matcher.force_save_all()
+        return {"status": "success", "message": "All databases saved"}
     return {"status": "error", "message": "Audio service not available"}

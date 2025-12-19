@@ -15,21 +15,38 @@ This is much more robust than simple chroma N-grams because:
 """
 
 import os
+import re
 import numpy as np
 import librosa
 import pickle
 import hashlib
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Set
 from collections import defaultdict, Counter
 from scipy.ndimage import maximum_filter
 from app.core.config import settings
 
 
 class AudioFingerprinter:
-    """Shazam-style audio fingerprinting with spectral peak landmarks."""
+    """
+    Shazam-style audio fingerprinting with spectral peak landmarks.
+
+    Supports multiple database files with eager loading at startup.
+    Each season has its own database file for easier management.
+    """
+    
+    # Database configuration: season_number -> database_filename
+    # Each season gets its own database file (audio_fingerprints_sXX.pkl)
+    DB_CONFIG = {
+        season: f"audio_fingerprints_s{season:02d}.pkl"
+        for season in range(1, 21)  # Seasons 1-20
+    }
     
     def __init__(self):
-        self.db_path = os.path.join(settings.DATA_DIR, "audio_fingerprints.pkl")
+        self.data_dir = settings.DATA_DIR
+        
+        # Limit seasons to load (for testing/deployment)
+        # Set MAX_SEASONS environment variable to limit (e.g., MAX_SEASONS=1 for season 1 only)
+        self.max_seasons = int(os.getenv('MAX_SEASONS', '20'))  # Default to all 20 seasons
         
         # Fingerprint parameters (tuned for TV audio)
         self.sr = 22050                 # Sample rate
@@ -42,65 +59,194 @@ class AudioFingerprinter:
         self.min_freq = 300             # Min frequency (Hz) - skip low rumble
         self.max_freq = 8000            # Max frequency (Hz) - skip high noise
         
-        # Database: hash -> [(episode_id, anchor_time), ...]
-        self.fingerprints: Dict[str, List[Tuple[str, float]]] = {}
-        self.episode_hash_counts: Dict[str, int] = {}  # Track hashes per episode
+        # Multi-database storage: db_file -> {fingerprints, episode_hash_counts}
+        # Only loaded databases are kept in memory (lazy loading)
+        self.loaded_dbs: Dict[str, Dict[str, Any]] = {}
         
-        self.load_db()
+        # Batch saving: track unsaved changes to avoid O(n^2) save operations
+        self.unsaved_episodes: Dict[str, int] = {}  # db_file -> count of unsaved episodes
+        self.save_batch_size = 5  # Save every N episodes (reduces O(n^2) to O(n))
         
-    def load_db(self):
-        """Load fingerprints from disk."""
-        if os.path.exists(self.db_path):
-            print(f"Loading audio fingerprints from {self.db_path}...")
-            try:
-                with open(self.db_path, 'rb') as f:
-                    data = pickle.load(f)
-                    if isinstance(data, dict) and 'fingerprints' in data:
-                        self.fingerprints = data['fingerprints']
-                        self.episode_hash_counts = data.get('counts', {})
-                    else:
-                        # Legacy format
-                        self.fingerprints = data
-                        self.episode_hash_counts = {}
-                print(f"✓ Loaded {len(self.fingerprints)} unique audio hashes")
-            except Exception as e:
-                print(f"Error loading audio DB: {e}")
-                self.fingerprints = {}
-                self.episode_hash_counts = {}
-        else:
-            print("No audio fingerprint database found. Starting fresh.")
+        # Track which database files exist (but don't load them at startup)
+        # Databases will be loaded lazily when needed (for matching or ingestion)
+        self._scan_databases()
+        # Disabled for now - will load databases after all seasons are ingested
+        # self._load_all_databases()
 
-    def clear_db(self):
-        """Clear all fingerprints from memory and disk."""
-        self.fingerprints = {}
-        self.episode_hash_counts = {}
-        if os.path.exists(self.db_path):
-            os.remove(self.db_path)
-        print("✓ Audio database cleared")
+        print(f"   (Batch saving: every {self.save_batch_size} episodes to optimize performance)")
+        print(f"   ℹ️  Database loading disabled - will load lazily when needed")
+        if self.max_seasons < 20:
+            print(f"   ⚠️  MAX_SEASONS={self.max_seasons} - only loading seasons 1-{self.max_seasons}")
+        
+    def _scan_databases(self):
+        """Scan for existing database files, respecting MAX_SEASONS limit."""
+        self.existing_dbs = set()
+        for season in range(1, min(self.max_seasons + 1, 21)):  # Limit to max_seasons
+            db_file = self.DB_CONFIG.get(season)
+            if db_file:
+                db_path = os.path.join(self.data_dir, db_file)
+                if os.path.exists(db_path):
+                    self.existing_dbs.add(db_file)
 
-    def save_db(self):
-        """Save fingerprints to disk (atomic write to prevent corruption)."""
+    def _load_all_databases(self):
+        """Eagerly load all existing database files at startup."""
+        if not self.existing_dbs:
+            print("   ℹ️  No existing database files found")
+            return
+
+        print(f"📦 Loading {len(self.existing_dbs)} season database(s) at startup...")
+        for db_file in self.existing_dbs:
+            self._load_db_file(db_file)
+        print(f"   ✓ Loaded {len(self.loaded_dbs)} database file(s)")
+
+    def _get_all_db_files(self) -> List[str]:
+        """Get list of all configured database files."""
+        return list(self.DB_CONFIG.values())
+    
+    def _get_season_from_episode_id(self, episode_id: str) -> Optional[int]:
+        """Extract season number from episode ID (e.g., 'S01E05' -> 1)."""
+        match = re.search(r'[Ss](\d+)', episode_id)
+        if match:
+            return int(match.group(1))
+        return None
+    
+    def _get_db_file_for_season(self, season: int) -> str:
+        """Determine which database file to use for a given season."""
+        if season in self.DB_CONFIG:
+            return self.DB_CONFIG[season]
+        # Default to season 1 database if season doesn't match
+        return self.DB_CONFIG.get(1, "audio_fingerprints_s01.pkl")
+    
+    def _get_db_file_for_episode(self, episode_id: str) -> str:
+        """Determine which database file to use for an episode."""
+        season = self._get_season_from_episode_id(episode_id)
+        if season is None:
+            # Default to first database if we can't determine season
+            return list(self.DB_CONFIG.values())[0]
+        return self._get_db_file_for_season(season)
+    
+    def _load_db_file(self, db_file: str, force_reload: bool = False) -> Dict[str, Any]:
+        """
+        Load a specific database file (lazy loading).
+        Returns the database data structure.
+        """
+        if db_file in self.loaded_dbs and not force_reload:
+            return self.loaded_dbs[db_file]
+        
+        db_path = os.path.join(self.data_dir, db_file)
+        
+        if not os.path.exists(db_path):
+            # Create empty database structure
+            db_data = {
+                'fingerprints': {},
+                'counts': {}
+            }
+            self.loaded_dbs[db_file] = db_data
+            return db_data
+        
         try:
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            print(f"📂 Loading database: {db_file}...")
+            with open(db_path, 'rb') as f:
+                data = pickle.load(f)
+            
+            if isinstance(data, dict) and 'fingerprints' in data:
+                db_data = {
+                    'fingerprints': data['fingerprints'],
+                    'counts': data.get('counts', {})
+                }
+            else:
+                # Legacy format
+                db_data = {
+                    'fingerprints': data,
+                    'counts': {}
+                }
+            
+            self.loaded_dbs[db_file] = db_data
+            print(f"   ✓ Loaded {len(db_data['fingerprints'])} unique hashes from {db_file}")
+            return db_data
+            
+        except Exception as e:
+            print(f"   ❌ Error loading {db_file}: {e}")
+            db_data = {'fingerprints': {}, 'counts': {}}
+            self.loaded_dbs[db_file] = db_data
+            return db_data
+    
+    def _save_db_file(self, db_file: str):
+        """Save a specific database file to disk."""
+        if db_file not in self.loaded_dbs:
+            return
+        
+        db_data = self.loaded_dbs[db_file]
+        db_path = os.path.join(self.data_dir, db_file)
+        
+        try:
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
             # Write to temp file first, then rename atomically
-            temp_path = self.db_path + '.tmp'
+            temp_path = db_path + '.tmp'
             with open(temp_path, 'wb') as f:
                 pickle.dump({
-                    'fingerprints': self.fingerprints,
-                    'counts': self.episode_hash_counts
+                    'fingerprints': db_data['fingerprints'],
+                    'counts': db_data['counts']
                 }, f)
             # Atomic rename (prevents corruption if interrupted)
-            os.replace(temp_path, self.db_path)
-            print(f"✓ Saved {len(self.fingerprints)} audio hashes")
+            os.replace(temp_path, db_path)
+            print(f"   ✓ Saved {len(db_data['fingerprints'])} hashes, {len(db_data['counts'])} episodes to {db_file}")
         except Exception as e:
-            print(f"Error saving audio DB: {e}")
+            print(f"   ❌ Error saving {db_file}: {e}")
             # Clean up temp file if it exists
-            temp_path = self.db_path + '.tmp'
+            temp_path = db_path + '.tmp'
             if os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
                 except:
                     pass
+    
+    def force_save_all(self):
+        """Force save all databases (useful at end of ingestion)."""
+        print("💾 Force saving all databases...")
+        for db_file in self.loaded_dbs.keys():
+            self._save_db_file(db_file)
+        self.unsaved_episodes = {}
+        print("✓ All databases saved")
+    
+    def _get_all_fingerprints(self) -> Dict[str, List[Tuple[str, float]]]:
+        """
+        Get combined fingerprints from all databases.
+        Loads databases on-demand if not already loaded (lazy loading).
+        Respects MAX_SEASONS limit.
+        """
+        # Load all existing databases if not already loaded (respecting MAX_SEASONS)
+        for db_file in self.existing_dbs:
+            if db_file not in self.loaded_dbs:
+                self._load_db_file(db_file)
+        
+        combined = {}
+        for db_file, db_data in self.loaded_dbs.items():
+            fingerprints = db_data['fingerprints']
+            # Merge fingerprints (hash -> list of (episode_id, time))
+            for hash_val, entries in fingerprints.items():
+                if hash_val not in combined:
+                    combined[hash_val] = []
+                combined[hash_val].extend(entries)
+        return combined
+    
+    def clear_db(self, db_file: Optional[str] = None):
+        """Clear fingerprints from a specific database or all databases."""
+        if db_file:
+            if db_file in self.loaded_dbs:
+                self.loaded_dbs[db_file] = {'fingerprints': {}, 'counts': {}}
+            db_path = os.path.join(self.data_dir, db_file)
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            print(f"✓ Cleared database: {db_file}")
+        else:
+            # Clear all
+            self.loaded_dbs = {}
+            for db_file in self._get_all_db_files():
+                db_path = os.path.join(self.data_dir, db_file)
+                if os.path.exists(db_path):
+                    os.remove(db_path)
+            print("✓ Cleared all audio databases")
 
     def _get_spectrogram_peaks(self, y: np.ndarray) -> List[Tuple[int, int]]:
         """
@@ -203,34 +349,49 @@ class AudioFingerprinter:
             return []
 
     def add_episode(self, episode_id: str, file_path: str):
-        """Process an episode and store its fingerprints."""
+        """Process an episode and store its fingerprints in the appropriate database."""
         fingerprints = self.fingerprint_audio(file_path)
         
         if not fingerprints:
             print(f"⚠️ No audio fingerprints generated for {episode_id}")
             return
         
+        # Determine which database file to use
+        db_file = self._get_db_file_for_episode(episode_id)
+        db_data = self._load_db_file(db_file)
+        
         # Add to database
         count = 0
         for h, offset in fingerprints:
-            if h not in self.fingerprints:
-                self.fingerprints[h] = []
-            self.fingerprints[h].append((episode_id, offset))
+            if h not in db_data['fingerprints']:
+                db_data['fingerprints'][h] = []
+            db_data['fingerprints'][h].append((episode_id, offset))
             count += 1
         
-        self.episode_hash_counts[episode_id] = count
-        print(f"✓ Added {count} audio hashes for {episode_id}")
-        self.save_db()
+        db_data['counts'][episode_id] = count
+        print(f"✓ Added {count} audio hashes for {episode_id} to {db_file}")
+        
+        # Batch saving: only save every N episodes to avoid O(n^2) complexity
+        # This dramatically speeds up ingestion as the database grows
+        self.unsaved_episodes[db_file] = self.unsaved_episodes.get(db_file, 0) + 1
+        
+        if self.unsaved_episodes[db_file] >= self.save_batch_size:
+            print(f"   💾 Batch save triggered ({self.unsaved_episodes[db_file]} episodes)")
+            self._save_db_file(db_file)
+            self.unsaved_episodes[db_file] = 0
+        else:
+            print(f"   ⏳ Deferred save ({self.unsaved_episodes[db_file]}/{self.save_batch_size} episodes)")
 
     def match_clip(self, file_path: str) -> Dict[str, Any]:
         """
-        Match a query clip against the database.
+        Match a query clip against all databases.
         
         Uses time-aligned voting: only counts matches where
         multiple hashes agree on the same time offset.
         This eliminates false positives from coincidental matches.
         
         OPTIMIZED: Skips common hashes and uses early termination.
+        Databases are loaded on-demand during matching.
         """
         print("🔍 Fingerprinting query clip...")
         query_prints = self.fingerprint_audio(file_path)
@@ -239,9 +400,16 @@ class AudioFingerprinter:
             print("No fingerprints found in query.")
             return {}
         
-        if not self.fingerprints:
+        # Load all databases and combine fingerprints for matching
+        # This is done on-demand (lazy loading)
+        print("📂 Loading databases for matching...")
+        all_fingerprints = self._get_all_fingerprints()
+        
+        if not all_fingerprints:
             print("Audio database is empty.")
             return {}
+        
+        print(f"   Searching across {len(self._get_all_db_files())} database(s)")
         
         # OPTIMIZATION 1: Filter out overly common hashes (appear in >10 episodes)
         # These are likely noise and slow down matching
@@ -249,9 +417,9 @@ class AudioFingerprinter:
         filtered_prints = []
         skipped_common = 0
         for h, t_query in query_prints:
-            if h in self.fingerprints:
+            if h in all_fingerprints:
                 # Skip hashes that appear in too many episodes (likely common sounds)
-                if len(self.fingerprints[h]) > max_episodes_per_hash:
+                if len(all_fingerprints[h]) > max_episodes_per_hash:
                     skipped_common += 1
                     continue
                 filtered_prints.append((h, t_query))
@@ -267,15 +435,15 @@ class AudioFingerprinter:
             filtered_prints = filtered_prints[::step]
             print(f"📊 Sampling: Using {len(filtered_prints)} of {len(query_prints)} query hashes")
         
-        print(f"Searching {len(filtered_prints)} query hashes against {len(self.fingerprints)} DB hashes...")
+        print(f"Searching {len(filtered_prints)} query hashes against {len(all_fingerprints)} DB hashes...")
         
         # Find matches: episode -> list of (db_time - query_time) offsets
         matches: Dict[str, List[float]] = defaultdict(list)
         match_count = 0
         
         for h, t_query in filtered_prints:
-            if h in self.fingerprints:
-                for ep_id, t_db in self.fingerprints[h]:
+            if h in all_fingerprints:
+                for ep_id, t_db in all_fingerprints[h]:
                     offset = t_db - t_query
                     matches[ep_id].append(offset)
                     match_count += 1
@@ -350,13 +518,23 @@ class AudioFingerprinter:
         return {}
 
     def get_stats(self) -> Dict[str, Any]:
-        """Return database statistics."""
-        total_entries = sum(len(v) for v in self.fingerprints.values())
+        """Return combined statistics from all databases."""
+        all_fingerprints = self._get_all_fingerprints()
+        all_counts = {}
+        
+        # Combine episode counts from all databases
+        for db_file in self._get_all_db_files():
+            db_data = self._load_db_file(db_file)
+            all_counts.update(db_data['counts'])
+        
+        total_entries = sum(len(v) for v in all_fingerprints.values())
         return {
-            "unique_hashes": len(self.fingerprints),
+            "unique_hashes": len(all_fingerprints),
             "total_entries": total_entries,
-            "episodes": len(self.episode_hash_counts),
-            "avg_hashes_per_episode": total_entries / max(1, len(self.episode_hash_counts))
+            "episodes": len(all_counts),
+            "avg_hashes_per_episode": total_entries / max(1, len(all_counts)),
+            "databases": len(self._get_all_db_files()),
+            "loaded_databases": len(self.loaded_dbs)
         }
 
 

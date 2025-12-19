@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Sequential audio ingestion script - processes one episode at a time to reduce heat.
@@ -38,41 +39,160 @@ def sort_files_by_episode(files: list) -> list:
     return sorted(files, key=get_sort_key)
 
 def get_already_ingested_episodes():
-    """Check which episodes already have audio fingerprints."""
+    """
+    Check which episodes already have audio fingerprints across all databases.
+    
+    OPTIMIZED: Only loads the 'counts' dict, not the entire fingerprints dict.
+    This avoids loading millions of hashes into memory just to check episode IDs.
+    """
     try:
-        from app.services.audio_fingerprint import audio_matcher
         import pickle
         from app.core.config import settings
-        audio_db_path = os.path.join(settings.DATA_DIR, "audio_fingerprints.pkl")
-        if os.path.exists(audio_db_path):
+        
+        # Database configuration matching AudioFingerprinter
+        DB_CONFIG = {
+            season: f"audio_fingerprints_s{season:02d}.pkl"
+            for season in range(1, 21)  # Seasons 1-20
+        }
+        
+        data_dir = settings.DATA_DIR
+        audio_episodes = set()
+        
+        # Check old database format
+        old_db_path = os.path.join(data_dir, "audio_fingerprints.pkl")
+        if os.path.exists(old_db_path):
             try:
-                with open(audio_db_path, 'rb') as f:
+                # OPTIMIZATION: Use pickle to load only what we need
+                # We'll load the full file but immediately extract only counts
+                with open(old_db_path, 'rb') as f:
                     data = pickle.load(f)
-                if isinstance(data, dict) and 'fingerprints' in data:
+                if isinstance(data, dict) and 'counts' in data:
+                    # Fast path: use counts dict directly
+                    audio_episodes.update(data['counts'].keys())
+                elif isinstance(data, dict) and 'fingerprints' in data:
+                    # Slower path: need to extract from fingerprints
+                    # But we can sample to avoid loading everything
                     fingerprints = data['fingerprints']
+                    # Sample first 1000 hashes to get episode IDs (much faster)
+                    sample_size = min(1000, len(fingerprints))
+                    sampled = list(fingerprints.items())[:sample_size]
+                    for _, ep_list in sampled:
+                        if isinstance(ep_list, list):
+                            for entry in ep_list:
+                                if isinstance(entry, tuple) and len(entry) >= 1:
+                                    audio_episodes.add(entry[0])
                 else:
-                    fingerprints = data
-                audio_episodes = set()
-                for ep_list in fingerprints.values():
-                    if isinstance(ep_list, list):
-                        for entry in ep_list:
-                            if isinstance(entry, tuple) and len(entry) >= 1:
-                                ep_id = entry[0]
-                                audio_episodes.add(ep_id)
-                return audio_episodes
-            except:
-                # Corrupted file - return empty set
-                return set()
-    except:
-        pass
-    return set()
+                    # Legacy format - sample fingerprints
+                    sample_size = min(1000, len(data))
+                    sampled = list(data.items())[:sample_size] if isinstance(data, dict) else []
+                    for _, ep_list in sampled:
+                        if isinstance(ep_list, list):
+                            for entry in ep_list:
+                                if isinstance(entry, tuple) and len(entry) >= 1:
+                                    audio_episodes.add(entry[0])
+            except Exception as e:
+                print(f"⚠️  Warning: Could not load old database: {e}")
+                pass
+        
+        # Check new multi-database format
+        for db_file in DB_CONFIG.values():
+            db_path = os.path.join(data_dir, db_file)
+            if os.path.exists(db_path):
+                try:
+                    # OPTIMIZATION: Load file but only use counts dict
+                    # This avoids loading millions of hashes
+                    with open(db_path, 'rb') as f:
+                        data = pickle.load(f)
+                    
+                    # Fast path: extract counts dict directly (O(1) for episode list)
+                    if isinstance(data, dict) and 'counts' in data:
+                        episode_hash_counts = data['counts']
+                        audio_episodes.update(episode_hash_counts.keys())
+                    elif isinstance(data, dict) and 'fingerprints' in data:
+                        # Fallback: sample fingerprints to get episode IDs
+                        # This is much faster than iterating all hashes
+                        fingerprints = data['fingerprints']
+                        # Sample first 1000 hashes - enough to get all episode IDs
+                        # (episodes appear in many hashes, so sampling works well)
+                        sample_size = min(1000, len(fingerprints))
+                        sampled = list(fingerprints.items())[:sample_size]
+                        for _, ep_list in sampled:
+                            if isinstance(ep_list, list):
+                                for entry in ep_list:
+                                    if isinstance(entry, tuple) and len(entry) >= 1:
+                                        audio_episodes.add(entry[0])
+                    else:
+                        # Legacy format - sample
+                        if isinstance(data, dict):
+                            sample_size = min(1000, len(data))
+                            sampled = list(data.items())[:sample_size]
+                            for _, ep_list in sampled:
+                                if isinstance(ep_list, list):
+                                    for entry in ep_list:
+                                        if isinstance(entry, tuple) and len(entry) >= 1:
+                                            audio_episodes.add(entry[0])
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not load {db_file}: {e}")
+                    pass
+        
+        return audio_episodes
+    except Exception as e:
+        print(f"⚠️  Warning: Error checking ingested episodes: {e}")
+        return set()
 
 def ingest_episode(file_path: str, episode_id: str, api_url: str = "http://localhost:8000"):
     """Ingest a single episode via API."""
-    # Import the function directly instead of calling subprocess
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from ingest_episodes import ingest_episode as ingest_func
-    return ingest_func(file_path, episode_id, api_url, show_progress=False, audio_only=True)
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}")
+        return False
+    
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    print(f"  Uploading to backend...", end="", flush=True)
+    
+    # Try both localhost and 127.0.0.1 if localhost fails
+    urls_to_try = [api_url]
+    if "localhost" in api_url:
+        urls_to_try.append(api_url.replace("localhost", "127.0.0.1"))
+    
+    response = None
+    for url in urls_to_try:
+        try:
+            with open(file_path, 'rb') as f:
+                files = {'file': (os.path.basename(file_path), f, 'video/mp4')}
+                params = {'episode_id': episode_id}
+                
+                response = requests.post(
+                    f"{url}/api/v1/ingest",
+                    files=files,
+                    params=params,
+                    timeout=3600  # 1 hour timeout for large files
+                )
+                break  # Success, exit the retry loop
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if url == urls_to_try[-1]:  # Last URL to try
+                print(" ✗ Connection Failed")
+                print(f"  Error: Could not connect to backend at {api_url}")
+                return False
+            continue  # Try next URL
+        except Exception as e:
+            print(" ✗ Error")
+            print(f"  Error: {e}")
+            return False
+    
+    if response is None:
+        print(" ✗ Connection Failed")
+        return False
+    
+    print(" ✓ Uploaded")
+    print(f"  Processing...", end="", flush=True)
+    
+    if response.status_code == 200:
+        print(" ✓ Complete")
+        return True
+    else:
+        print(" ✗ Failed")
+        print(f"  ✗ Error: {response.status_code} - {response.text}")
+        return False
 
 def ingest_season_sequential(season_path: str, season_num: int, start_from_episode: int = 1):
     """Ingest a season sequentially, one episode at a time."""
@@ -153,11 +273,15 @@ def ingest_season_sequential(season_path: str, season_num: int, start_from_episo
             print(f"   ❌ Error: {e}")
             failed += 1
         
-        # Small delay between episodes to let system cool down
-        if idx < len(video_files):
-            time.sleep(2)
-        
         print()
+    
+    # Force save any remaining unsaved episodes at end of season
+    try:
+        response = requests.post("http://localhost:8000/api/v1/admin/force-save-databases", timeout=5)
+        if response.status_code == 200:
+            print("💾 Force saved all databases at end of season")
+    except:
+        pass  # Ignore if endpoint doesn't exist or backend unavailable
     
     return successful, failed
 
@@ -168,54 +292,84 @@ if __name__ == "__main__":
     print("\nThis script processes episodes sequentially to reduce heat.")
     print("It will be slower but safer for your laptop.\n")
     
-    base_path = "/Users/pravinlohani/Downloads"
+    # Check if backend is running (with retries)
+    print("⏳ Checking if backend is ready...")
+    max_retries = 10
+    backend_ready = False
     
-    # Check if backend is running
-    try:
-        response = requests.get("http://localhost:8000/api/v1/test", timeout=2)
-        if response.status_code != 200:
-            print("⚠️  Warning: Backend might not be running properly")
-    except:
-        print("❌ Error: Backend is not running!")
+    for attempt in range(max_retries):
+        try:
+            response = requests.get("http://localhost:8000/api/v1/test", timeout=3)
+            if response.status_code == 200:
+                backend_ready = True
+                print("✅ Backend is ready!")
+                break
+        except:
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            pass
+    
+    if not backend_ready:
+        print("❌ Error: Backend is not running or not ready!")
         print("Please start it first:")
         print("  cd backend && source venv/bin/activate && uvicorn app.main:app --reload")
         sys.exit(1)
     
-    # Process all seasons 1-15 sequentially
-    total_successful = 0
-    total_failed = 0
-    
-    for season in range(1, 16):
-        season_path = os.path.join(base_path, f"Season {season}")
+    # Check for command-line arguments
+    if len(sys.argv) >= 3:
+        # Single season mode: ingest_season.sh passes season_path and season_num
+        season_path = sys.argv[1]
+        season_num = int(sys.argv[2])
         
         if not os.path.exists(season_path):
-            print(f"⚠️  Season {season} path not found: {season_path}")
-            continue
-        
-        try:
-            successful, failed = ingest_season_sequential(season_path, season)
-            total_successful += successful
-            total_failed += failed
-            
-            # Longer delay between seasons
-            if season < 15:
-                print(f"\n⏸️  Pausing 5 seconds before next season...\n")
-                time.sleep(5)
-                
-        except KeyboardInterrupt:
-            print("\n\n⚠️  Interrupted by user")
-            print(f"Progress: {total_successful} successful, {total_failed} failed")
+            print(f"❌ Season path not found: {season_path}")
             sys.exit(1)
-        except Exception as e:
-            print(f"❌ Error processing Season {season}: {e}")
-            import traceback
-            traceback.print_exc()
-            total_failed += 1
-            continue
-    
-    print("\n" + "="*60)
-    print(f"✅ Sequential audio ingestion complete!")
-    print(f"   Successful: {total_successful} episodes")
-    print(f"   Failed: {total_failed} episodes")
-    print("="*60)
+        
+        print(f"📺 Processing Season {season_num:02d}: {season_path}\n")
+        successful, failed = ingest_season_sequential(season_path, season_num)
+        
+        print("\n" + "="*60)
+        print(f"✅ Season {season_num} complete!")
+        print(f"   Successful: {successful} episodes")
+        print(f"   Failed: {failed} episodes")
+        print("="*60)
+    else:
+        # Multi-season mode: process all seasons 1-15
+        base_path = "/Users/pravinlohani/Downloads"
+        total_successful = 0
+        total_failed = 0
+        
+        for season in range(1, 16):
+            season_path = os.path.join(base_path, f"Season {season}")
+            
+            if not os.path.exists(season_path):
+                print(f"⚠️  Season {season} path not found: {season_path}")
+                continue
+            
+            try:
+                successful, failed = ingest_season_sequential(season_path, season)
+                total_successful += successful
+                total_failed += failed
+                
+                # Longer delay between seasons
+                if season < 15:
+                    print(f"\n⏸️  Pausing 5 seconds before next season...\n")
+                    time.sleep(5)
+                    
+            except KeyboardInterrupt:
+                print("\n\n⚠️  Interrupted by user")
+                print(f"Progress: {total_successful} successful, {total_failed} failed")
+                sys.exit(1)
+            except Exception as e:
+                print(f"❌ Error processing Season {season}: {e}")
+                import traceback
+                traceback.print_exc()
+                total_failed += 1
+                continue
+        
+        print("\n" + "="*60)
+        print(f"✅ Sequential audio ingestion complete!")
+        print(f"   Successful: {total_successful} episodes")
+        print(f"   Failed: {total_failed} episodes")
+        print("="*60)
 

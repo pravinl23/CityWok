@@ -18,8 +18,30 @@ services:
     volumes:
       - ./backend/data:/app/data
       # For production: mount persistent volume instead
-      # - /mnt/data:/app/data
+      # - fingerprint-cache:/app/data/fingerprints
     environment:
+      # Application settings
       - DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1
+
+      # LMDB mode (set to "true" to enable)
+      - USE_LMDB=${USE_LMDB:-false}
+      - DB_VERSION=${DB_VERSION:-v1}
+      # Limit to 5 seasons for local testing
+      - MAX_SEASONS=${MAX_SEASONS:-5}
+
+      # S3/R2 configuration (for downloading databases)
+      - S3_BUCKET=${S3_BUCKET:-citywok-audio-db}
+      - S3_PREFIX=${S3_PREFIX:-fingerprints}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-auto}
+
+      # For Cloudflare R2, set this to your R2 endpoint
+      - AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL:-}
     restart: unless-stopped
+
+# Volumes for production deployment
+volumes:
+  fingerprint-cache:
+    driver: local
