@@ -45,6 +45,7 @@ async def startup_event():
             traceback.print_exc()
     else:
         print("\n🔧 Using pickle mode (legacy)")
+        # Databases will be eagerly loaded in AudioFingerprinter.__init__
 
     print("="*60)
     print("✓ Startup complete!")

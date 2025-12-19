@@ -48,14 +48,19 @@ class AudioFingerprinter:
         self.unsaved_episodes: Dict[str, int] = {}  # db_file -> count of unsaved episodes
         self.save_batch_size = 5  # Save every N episodes (reduces O(n^2) to O(n))
         
-        # Track which database files exist (but don't load them at startup)
-        # Databases will be loaded lazily when needed (for matching or ingestion)
+        # Track which database files exist
         self._scan_databases()
-        # Disabled for now - will load databases after all seasons are ingested
-        # self._load_all_databases()
+        
+        # Eagerly load all databases at startup for instant responses
+        # This loads everything into memory upfront
+        EAGER_LOAD = os.getenv('EAGER_LOAD_DB', 'true').lower() in ('true', '1', 'yes')
+        if EAGER_LOAD:
+            print(f"📦 Eager loading all databases into memory at startup...")
+            self._load_all_databases()
+        else:
+            print(f"   ℹ️  Lazy loading enabled - databases will load on-demand")
 
         print(f"   (Batch saving: every {self.save_batch_size} episodes to optimize performance)")
-        print(f"   ℹ️  Database loading disabled - will load lazily when needed")
         if self.max_seasons < 20:
             print(f"   ⚠️  MAX_SEASONS={self.max_seasons} - only loading seasons 1-{self.max_seasons}")
         
