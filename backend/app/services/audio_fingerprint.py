@@ -386,6 +386,8 @@ class AudioFingerprinter:
             print("No fingerprints found in query.")
             return {}
         
+        print(f"   Generated {len(query_prints)} query fingerprints")
+        
         # Load all databases and combine fingerprints for matching
         # This is done on-demand (lazy loading)
         print("📂 Loading databases for matching...")
@@ -395,7 +397,12 @@ class AudioFingerprinter:
             print("Audio database is empty.")
             return {}
         
-        print(f"   Searching across {len(self._get_all_db_files())} database(s)")
+        print(f"   Searching across {len(self.loaded_dbs)} loaded database(s)")
+        print(f"   Database has {len(all_fingerprints):,} unique hashes")
+        
+        # Check how many query hashes exist in database
+        found_in_db = sum(1 for h, _ in query_prints if h in all_fingerprints)
+        print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
         
         # OPTIMIZATION 1: Filter out overly common hashes (appear in >10 episodes)
         # These are likely noise and slow down matching
@@ -412,6 +419,8 @@ class AudioFingerprinter:
         
         if skipped_common > 0:
             print(f"⏭️  Skipped {skipped_common} overly common hashes (appear in >{max_episodes_per_hash} episodes)")
+        
+        print(f"   After filtering: {len(filtered_prints)} query hashes to search")
         
         # OPTIMIZATION 2: Sample query hashes if too many (use every Nth hash)
         # This speeds up long clips without losing accuracy
@@ -487,8 +496,8 @@ class AudioFingerprinter:
         print(f"Best match: {best_episode} with {best_count} aligned hashes at offset {best_offset:.1f}s")
         
         # Require minimum aligned matches to avoid false positives
-        # Lower threshold: at least 10 matches or 3% of query hashes
-        min_aligned = max(10, len(filtered_prints) * 0.03)  # At least 3% or 10 matches
+        # Lower threshold: at least 5 matches or 1% of query hashes
+        min_aligned = max(5, len(filtered_prints) * 0.01)  # At least 1% or 5 matches
         
         if best_episode and best_count >= min_aligned:
             confidence = min(99, int((best_count / len(filtered_prints)) * 100))
