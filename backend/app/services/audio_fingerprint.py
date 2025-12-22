@@ -399,9 +399,12 @@ class AudioFingerprinter:
         found_in_db = sum(1 for h, _ in query_prints if h in all_fingerprints)
         print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
         
-        # OPTIMIZATION 1: Filter out overly common hashes (appear in >100 episodes)
-        # Increased from 10 to 100 to match LMDB mode and allow more matches
-        max_episodes_per_hash = 100
+        # OPTIMIZATION 1: Filter out overly common hashes
+        # Use percentage-based threshold: filter hashes in >50% of episodes
+        # This scales properly whether we have 47 episodes (seasons 1-3) or 271 episodes (all seasons)
+        total_episodes = len(set(ep for episodes in all_fingerprints.values() for ep, _ in episodes))
+        max_episodes_per_hash = max(100, int(total_episodes * 0.5))  # At least 100, or 50% of total
+        print(f"   Filtering hashes appearing in >{max_episodes_per_hash} episodes (50% of {total_episodes} total)")
         filtered_prints = []
         skipped_common = 0
         for h, t_query in query_prints:
@@ -550,9 +553,12 @@ class AudioFingerprinter:
         found_in_db = sum(1 for h, _ in query_prints if h in all_fingerprints)
         print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
         
-        # Filter out overly common hashes (appear in >100 episodes)
-        # Increased from 10 to 100 to match LMDB mode and allow more matches
-        max_episodes_per_hash = 100
+        # Filter out overly common hashes
+        # Use percentage-based threshold: filter hashes in >50% of episodes
+        # This scales properly whether we have 47 episodes (seasons 1-3) or 271 episodes (all seasons)
+        total_episodes = len(set(ep for episodes in all_fingerprints.values() for ep, _ in episodes))
+        max_episodes_per_hash = max(100, int(total_episodes * 0.5))  # At least 100, or 50% of total
+        print(f"   Filtering hashes appearing in >{max_episodes_per_hash} episodes (50% of {total_episodes} total)")
         filtered_prints = []
         skipped_common = 0
         for h, t_query in query_prints:
