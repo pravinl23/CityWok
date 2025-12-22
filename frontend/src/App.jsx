@@ -207,7 +207,7 @@ function App() {
             >
               <div className="upload-icon">↑</div>
               <p className="upload-text">Drag & Drop Media</p>
-              <p className="upload-formats">(MP4, MP3, WAV, M4A)</p>
+              <p className="upload-formats">(MP4, MOV, AVI, MKV, MP3, WAV, M4A)</p>
               <input
                 ref={fileInputRef}
                 type="file"
