@@ -399,8 +399,9 @@ class AudioFingerprinter:
         found_in_db = sum(1 for h, _ in query_prints if h in all_fingerprints)
         print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
         
-        # OPTIMIZATION 1: Filter out overly common hashes (appear in >10 episodes)
-        max_episodes_per_hash = 10
+        # OPTIMIZATION 1: Filter out overly common hashes (appear in >100 episodes)
+        # Increased from 10 to 100 to match LMDB mode and allow more matches
+        max_episodes_per_hash = 100
         filtered_prints = []
         skipped_common = 0
         for h, t_query in query_prints:
@@ -476,11 +477,32 @@ class AudioFingerprinter:
         
         print(f"Best match: {best_episode} with {best_count} aligned hashes at offset {best_offset:.1f}s")
         
-        # Require minimum aligned matches
-        min_aligned = max(5, len(filtered_prints) * 0.01)
+        # Require minimum aligned matches (same logic as match_clip)
+        duration_seconds = len(filtered_prints) / 30  # Rough estimate: ~30 hashes per second
+        if duration_seconds < 120:  # Less than 2 minutes
+            min_aligned = max(5, len(filtered_prints) * 0.005)  # 0.5% or 5 matches
+        else:
+            min_aligned = max(10, len(filtered_prints) * 0.01)  # 1% or 10 matches
         
         if best_episode and best_count >= min_aligned:
-            confidence = min(99, int((best_count / len(filtered_prints)) * 100))
+            # Calculate base confidence from alignment ratio
+            base_confidence = (best_count / len(filtered_prints)) * 100
+
+            # Boost confidence for strong matches (many aligned hashes)
+            # This accounts for TikTok's re-encoding which reduces alignment %
+            if best_count >= 100:
+                # Very strong match: boost significantly
+                confidence = min(95, int(base_confidence * 3))
+            elif best_count >= 50:
+                # Strong match: boost moderately
+                confidence = min(85, int(base_confidence * 2.5))
+            elif best_count >= 20:
+                # Moderate match: boost slightly
+                confidence = min(75, int(base_confidence * 2))
+            else:
+                # Weak match: use base confidence
+                confidence = min(65, int(base_confidence * 1.5))
+
             return {
                 "episode_id": best_episode,
                 "timestamp": max(0, best_offset),
@@ -528,8 +550,9 @@ class AudioFingerprinter:
         found_in_db = sum(1 for h, _ in query_prints if h in all_fingerprints)
         print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
         
-        # Filter out overly common hashes (appear in >10 episodes)
-        max_episodes_per_hash = 10
+        # Filter out overly common hashes (appear in >100 episodes)
+        # Increased from 10 to 100 to match LMDB mode and allow more matches
+        max_episodes_per_hash = 100
         filtered_prints = []
         skipped_common = 0
         for h, t_query in query_prints:
@@ -616,11 +639,33 @@ class AudioFingerprinter:
         print(f"Best match: {best_episode} with {best_count} aligned hashes at offset {best_offset:.1f}s")
         
         # Require minimum aligned matches to avoid false positives
-        # Lower threshold: at least 5 matches or 1% of query hashes
-        min_aligned = max(5, len(filtered_prints) * 0.01)  # At least 1% or 5 matches
+        # For short clips (< 2 min), use lower threshold as they have fewer hashes
+        # For longer clips, require more alignment
+        duration_seconds = len(filtered_prints) / 30  # Rough estimate: ~30 hashes per second
+        if duration_seconds < 120:  # Less than 2 minutes
+            min_aligned = max(5, len(filtered_prints) * 0.005)  # 0.5% or 5 matches
+        else:
+            min_aligned = max(10, len(filtered_prints) * 0.01)  # 1% or 10 matches
         
         if best_episode and best_count >= min_aligned:
-            confidence = min(99, int((best_count / len(filtered_prints)) * 100))
+            # Calculate base confidence from alignment ratio
+            base_confidence = (best_count / len(filtered_prints)) * 100
+
+            # Boost confidence for strong matches (many aligned hashes)
+            # This accounts for TikTok's re-encoding which reduces alignment %
+            if best_count >= 100:
+                # Very strong match: boost significantly
+                confidence = min(95, int(base_confidence * 3))
+            elif best_count >= 50:
+                # Strong match: boost moderately
+                confidence = min(85, int(base_confidence * 2.5))
+            elif best_count >= 20:
+                # Moderate match: boost slightly
+                confidence = min(75, int(base_confidence * 2))
+            else:
+                # Weak match: use base confidence
+                confidence = min(65, int(base_confidence * 1.5))
+
             return {
                 "episode_id": best_episode,
                 "timestamp": max(0, best_offset),

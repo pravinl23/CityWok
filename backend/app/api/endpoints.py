@@ -283,16 +283,18 @@ async def identify_episode(
         
         print(f"🎵 Processing: {source_name} ({file_size / (1024*1024):.1f} MB)")
 
-        # Use direct audio extraction (same method as ingestion) for consistency
+        # Convert to MP3 for consistent processing (matches ingestion method)
         # This ensures TikTok clips are fingerprinted the same way as episodes were ingested
-        print("   Extracting audio directly (no MP3 conversion)...")
-        audio_array, sr = extract_audio_to_memory(temp_path, sr=22050)
+        print("   Converting to MP3 for consistent fingerprinting...")
+        audio_path = convert_to_mp3(temp_path)
 
-        # Schedule cleanup of original file
-        background_tasks.add_task(cleanup_file, temp_path)
+        # Schedule cleanup (both original and converted if different)
+        background_tasks.add_task(cleanup_file, audio_path)
+        if audio_path != temp_path:
+            background_tasks.add_task(cleanup_file, temp_path)
 
-        # Match using audio array directly (avoids MP3 conversion issues)
-        result = audio_matcher.match_audio_array(audio_array, sr)
+        # Match using MP3 file (same method as ingestion)
+        result = audio_matcher.match_clip(audio_path)
         
         if result and result.get('episode_id'):
             return {
