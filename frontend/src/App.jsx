@@ -4,6 +4,9 @@ import './App.css'
 import cartmanImage from './assets/cartman.png'
 import backgroundImage from './assets/background.jpg'
 
+// Get API URL from environment variable or use localhost for development
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
 function App() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -57,7 +60,7 @@ function App() {
     formData.append('file', file)
     
     try {
-      const response = await axios.post('http://localhost:8000/api/v1/identify', formData, {
+      const response = await axios.post(`${API_URL}/api/v1/identify`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
@@ -86,7 +89,7 @@ function App() {
     formData.append('url', url.trim())
     
     try {
-      const response = await axios.post('http://localhost:8000/api/v1/identify', formData, {
+      const response = await axios.post(`${API_URL}/api/v1/identify`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         },
