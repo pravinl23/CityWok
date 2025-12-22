@@ -400,11 +400,11 @@ class AudioFingerprinter:
         print(f"   Query hashes found in DB: {found_in_db}/{len(query_prints)} ({found_in_db/len(query_prints)*100:.1f}%)")
         
         # OPTIMIZATION 1: Filter out overly common hashes
-        # Use percentage-based threshold: filter hashes in >50% of episodes
+        # Use percentage-based threshold: filter hashes in >30% of episodes
         # This scales properly whether we have 47 episodes (seasons 1-3) or 271 episodes (all seasons)
         total_episodes = len(set(ep for episodes in all_fingerprints.values() for ep, _ in episodes))
-        max_episodes_per_hash = max(100, int(total_episodes * 0.5))  # At least 100, or 50% of total
-        print(f"   Filtering hashes appearing in >{max_episodes_per_hash} episodes (50% of {total_episodes} total)")
+        max_episodes_per_hash = max(100, int(total_episodes * 0.3))  # At least 100, or 30% of total
+        print(f"   Filtering hashes appearing in >{max_episodes_per_hash} episodes (30% of {total_episodes} total)")
         filtered_prints = []
         skipped_common = 0
         for h, t_query in query_prints:
