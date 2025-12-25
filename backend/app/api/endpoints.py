@@ -14,28 +14,23 @@ USE_LMDB = os.getenv('USE_LMDB', 'false').lower() in ('true', '1', 'yes')
 
 # Import audio utilities (needed for both modes)
 try:
-    from app.core.audio_utils import extract_audio_to_memory, extract_audio_from_upload, extract_audio_from_bytes
+    from app.core.audio_utils import extract_audio_to_memory
 except ImportError as e:
     print(f"Warning: Audio utilities not available: {e}")
     extract_audio_to_memory = None
-    extract_audio_from_upload = None
-    extract_audio_from_bytes = None
 
 try:
     if USE_LMDB:
         print("🔧 Using LMDB mode for audio fingerprinting")
         from app.services.audio_fingerprint_lmdb import audio_matcher_lmdb as audio_matcher
         AUDIO_AVAILABLE = True
-        MEMORY_MODE = True
     else:
         print("🔧 Using pickle mode for audio fingerprinting (legacy)")
         from app.services.audio_fingerprint import audio_matcher
         AUDIO_AVAILABLE = True
-        MEMORY_MODE = False
 except ImportError as e:
     print(f"Error: Audio fingerprinting not available: {e}")
     AUDIO_AVAILABLE = False
-    MEMORY_MODE = False
     audio_matcher = None
 
 # URL downloading

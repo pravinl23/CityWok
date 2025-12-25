@@ -19,26 +19,9 @@ import hashlib
 from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict, Counter
 from scipy.ndimage import maximum_filter
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from app.core.config import settings
 from app.storage.lmdb_store import LMDBFingerprintStore
-
-
-from app.storage.lmdb_store import LMDBFingerprintStore
-
-def _parallel_search_worker(args):
-    """Worker function for ProcessPoolExecutor."""
-    db_path, unique_hashes, season = args
-    try:
-        # Open a temporary store for this process
-        # (LMDB allows multiple processes to open the same env for reading)
-        store = LMDBFingerprintStore(db_path, season=season, readonly=True)
-        results = store.get_hashes(unique_hashes)
-        store.close()
-        return season, results
-    except Exception as e:
-        print(f"⚠️ Process worker error for season {season}: {e}")
-        return season, {}
 
 class AudioFingerprinterLMDB:
     """

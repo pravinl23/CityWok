@@ -1,16 +1,35 @@
+# Environment
 .env
-*.md
-*.txt
-*.pdf
-*.docx
-*.doc
-*.xls
-*.xlsx
-*.pptx
-*.ppt
-*.odt
-*.ods
-*.odp
-*.odg
+
+# Logs
 *.log
 backend.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Data files (databases)
+backend/data/
+*.pkl
+
+# IDE
+*.code-workspace
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (user may want to track some)
+# *.md
+# *.txt
