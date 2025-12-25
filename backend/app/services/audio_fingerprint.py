@@ -8,6 +8,7 @@ import time
 from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict, Counter
 from scipy.ndimage import maximum_filter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.core.config import settings
 
 class AudioFingerprinter:
@@ -165,22 +166,56 @@ class AudioFingerprinter:
             
             current_query = [query_prints[i] for i in current_indices]
             
+            # OPTIMIZATION: Parallelize hash matching using threading (I/O-bound operation)
             pass_matches = defaultdict(list)
-            for h, t_q in current_query:
-                if h in self.fingerprints and h not in self._common_hashes:
-                    arr = self.fingerprints[h]
-                    # Dynamic filtering (relaxed)
-                    if len(arr) > 20000:
-                        self._common_hashes.add(h)
-                        continue
-                        
-                    for x in arr:
-                        ep_idx = x['ep_idx']
-                        t_db = x['offset']
-                        ep_id = self.episode_list[ep_idx]
-                        offset = t_db - t_q
-                        all_matches[ep_id].append(offset)
-                        pass_matches[ep_id].append(offset)
+            
+            num_workers = min(8, len(current_query) // 100)  # Use threads for chunks of 100+ hashes
+            chunk_size = max(100, len(current_query) // num_workers) if num_workers > 1 else len(current_query)
+            
+            def match_hash_chunk(chunk):
+                """Match a chunk of query hashes against database (thread-safe)."""
+                chunk_matches = defaultdict(list)
+                for h, t_q in chunk:
+                    if h in self.fingerprints and h not in self._common_hashes:
+                        arr = self.fingerprints[h]
+                        # Dynamic filtering (relaxed)
+                        if len(arr) > 20000:
+                            # Note: Adding to common_hashes is not thread-safe, but acceptable for performance
+                            continue
+                        for x in arr:
+                            ep_idx = x['ep_idx']
+                            t_db = x['offset']
+                            ep_id = self.episode_list[ep_idx]
+                            offset = t_db - t_q
+                            chunk_matches[ep_id].append(offset)
+                return chunk_matches
+            
+            # Split query into chunks and process in parallel
+            if len(current_query) > 200 and num_workers > 1:
+                query_chunks = [current_query[i:i+chunk_size] for i in range(0, len(current_query), chunk_size)]
+                
+                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                    futures = [executor.submit(match_hash_chunk, chunk) for chunk in query_chunks]
+                    for future in as_completed(futures):
+                        chunk_result = future.result()
+                        for ep_id, offsets in chunk_result.items():
+                            all_matches[ep_id].extend(offsets)
+                            pass_matches[ep_id].extend(offsets)
+            else:
+                # Sequential processing for small queries
+                for h, t_q in current_query:
+                    if h in self.fingerprints and h not in self._common_hashes:
+                        arr = self.fingerprints[h]
+                        if len(arr) > 20000:
+                            self._common_hashes.add(h)
+                            continue
+                        for x in arr:
+                            ep_idx = x['ep_idx']
+                            t_db = x['offset']
+                            ep_id = self.episode_list[ep_idx]
+                            offset = t_db - t_q
+                            all_matches[ep_id].append(offset)
+                            pass_matches[ep_id].append(offset)
             
             # Check for strong match
             if pass_matches:

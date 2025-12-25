@@ -283,18 +283,38 @@ async def identify_episode(
         
         print(f"🎵 Processing: {source_name} ({file_size / (1024*1024):.1f} MB)")
 
-        # Convert to MP3 for consistent processing (matches ingestion method)
-        # This ensures TikTok clips are fingerprinted the same way as episodes were ingested
-        print("   Converting to MP3 for consistent fingerprinting...")
-        audio_path = convert_to_mp3(temp_path)
-
-        # Schedule cleanup (both original and converted if different)
-        background_tasks.add_task(cleanup_file, audio_path)
-        if audio_path != temp_path:
-            background_tasks.add_task(cleanup_file, temp_path)
-
-        # Match using MP3 file (same method as ingestion)
-        result = audio_matcher.match_clip(audio_path)
+        # OPTIMIZATION: Extract audio directly to memory (skip MP3 conversion)
+        # This is faster and uses less disk I/O
+        if extract_audio_to_memory and hasattr(audio_matcher, 'match_audio_array'):
+            print("   Extracting audio to memory (skipping MP3 conversion)...")
+            import time
+            extract_start = time.time()
+            try:
+                audio_array, sr = extract_audio_to_memory(temp_path, sr=22050)
+                extract_time = time.time() - extract_start
+                print(f"   ✓ Audio extracted in {extract_time:.2f}s")
+                
+                # Schedule cleanup of temp file
+                background_tasks.add_task(cleanup_file, temp_path)
+                
+                # Match using audio array directly (faster than disk I/O)
+                result = audio_matcher.match_audio_array(audio_array, sr)
+            except Exception as e:
+                print(f"   ⚠️  In-memory extraction failed: {e}, falling back to MP3 conversion")
+                # Fallback to original method
+                audio_path = convert_to_mp3(temp_path)
+                background_tasks.add_task(cleanup_file, audio_path)
+                if audio_path != temp_path:
+                    background_tasks.add_task(cleanup_file, temp_path)
+                result = audio_matcher.match_clip(audio_path)
+        else:
+            # Fallback to original method (MP3 conversion)
+            print("   Converting to MP3 for consistent fingerprinting...")
+            audio_path = convert_to_mp3(temp_path)
+            background_tasks.add_task(cleanup_file, audio_path)
+            if audio_path != temp_path:
+                background_tasks.add_task(cleanup_file, temp_path)
+            result = audio_matcher.match_clip(audio_path)
         
         if result and result.get('episode_id'):
             return {
