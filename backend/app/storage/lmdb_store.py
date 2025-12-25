@@ -112,46 +112,56 @@ def encode_posting_list(entries: List[Tuple[str, float]]) -> bytes:
         return bytes(buffer)
 
 
+# Thread-local storage for decompressors
+import threading
+_THREAD_LOCAL = threading.local()
+
+def get_decompressor():
+    if not hasattr(_THREAD_LOCAL, 'decompressor'):
+        try:
+            import zstandard as zstd
+            _THREAD_LOCAL.decompressor = zstd.ZstdDecompressor()
+        except ImportError:
+            return None
+    return _THREAD_LOCAL.decompressor
+
 def decode_posting_list(data: bytes) -> List[Tuple[str, float]]:
     """
-    Decode compressed posting list.
-
-    Args:
-        data: Compressed binary data
-
-    Returns:
-        List of (episode_id, timestamp_seconds) tuples
+    Decode compressed posting list efficiently.
     """
-    try:
-        import zstandard as zstd
-    except ImportError:
-        zstd = None
-
-    # Decompress
-    if zstd:
+    decompressor = get_decompressor()
+    if decompressor:
         try:
-            decompressor = zstd.ZstdDecompressor()
             buffer = decompressor.decompress(data)
         except:
-            # Maybe it's not compressed (fallback)
             buffer = data
     else:
         buffer = data
 
-    # Parse
-    count = struct.unpack('<H', buffer[0:2])[0]
-
+    # Fast path: use struct.unpack_from
+    count = struct.unpack_from('<H', buffer, 0)[0]
     entries = []
     offset = 2
+    
+    # Pre-bind functions for speed
+    unpack_from = struct.unpack_from
+    
     for _ in range(count):
-        ep_num = struct.unpack('<H', buffer[offset:offset+2])[0]
+        ep_num = unpack_from('<H', buffer, offset)[0]
         offset += 2
-        time_ms, varint_len = decode_varint(buffer, offset)
-        offset += varint_len
-
-        ep_id = int_to_episode(ep_num)
-        time_sec = time_ms / 1000.0
-        entries.append((ep_id, time_sec))
+        
+        # Manual varint decoding for speed
+        val = 0
+        shift = 0
+        while True:
+            byte = buffer[offset]
+            val |= (byte & 0x7f) << shift
+            offset += 1
+            if not (byte & 0x80):
+                break
+            shift += 7
+            
+        entries.append((int_to_episode(ep_num), val / 1000.0))
 
     return entries
 
@@ -244,14 +254,38 @@ class LMDBFingerprintStore:
             List of (episode_id, timestamp_seconds) tuples
         """
         key = struct.pack('<Q', hash_int)
-
-        # Open sub-database in the same transaction where we use it
-        with self.env.begin() as txn:
+        
+        with self.env.begin(write=False) as txn:
             fingerprints_db = self.env.open_db(self.fingerprints_db_name, txn=txn)
-            value = txn.get(key, db=fingerprints_db)
-            if value is None:
+            val = txn.get(key, db=fingerprints_db)
+            if not val:
                 return []
-            return decode_posting_list(value)
+            return decode_posting_list(val)
+
+    def get_hashes(self, hash_ints: List[int]) -> Dict[int, List[Tuple[str, float]]]:
+        """
+        Retrieve posting lists for multiple hashes (batch optimization).
+        Opens a single transaction for all lookups.
+
+        Args:
+            hash_ints: List of xxhash64 integers
+
+        Returns:
+            Dictionary of hash_int -> list of matches
+        """
+        results = {}
+        # Converting all to bytes first
+        keys = [(h, struct.pack('<Q', h)) for h in hash_ints]
+        
+        with self.env.begin(write=False) as txn:
+            fingerprints_db = self.env.open_db(self.fingerprints_db_name, txn=txn)
+            cursor = txn.cursor(db=fingerprints_db)
+            for h, key in keys:
+                val = cursor.get(key)
+                if val:
+                    results[h] = decode_posting_list(val)
+        
+        return results
 
     def put_metadata(self, key: str, value: dict):
         """

@@ -11,15 +11,34 @@ Implements Shazam-style spectral peak landmark fingerprinting with:
 import os
 import re
 import struct
+import time
 import numpy as np
 import librosa
 import xxhash
+import hashlib
 from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict, Counter
 from scipy.ndimage import maximum_filter
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from app.core.config import settings
 from app.storage.lmdb_store import LMDBFingerprintStore
 
+
+from app.storage.lmdb_store import LMDBFingerprintStore
+
+def _parallel_search_worker(args):
+    """Worker function for ProcessPoolExecutor."""
+    db_path, unique_hashes, season = args
+    try:
+        # Open a temporary store for this process
+        # (LMDB allows multiple processes to open the same env for reading)
+        store = LMDBFingerprintStore(db_path, season=season, readonly=True)
+        results = store.get_hashes(unique_hashes)
+        store.close()
+        return season, results
+    except Exception as e:
+        print(f"⚠️ Process worker error for season {season}: {e}")
+        return season, {}
 
 class AudioFingerprinterLMDB:
     """
@@ -31,7 +50,7 @@ class AudioFingerprinterLMDB:
 
     # Database configuration: season_number -> database_directory
     # For local testing: only load seasons 1-5
-    MAX_SEASONS = int(os.getenv('MAX_SEASONS', '5'))  # Default to 5 for local testing
+    MAX_SEASONS = int(os.getenv('MAX_SEASONS', '20'))  # Default to 20
     DB_CONFIG = {
         season: f"season_{season:02d}.lmdb"
         for season in range(1, MAX_SEASONS + 1)  # Seasons 1-5 (configurable)
@@ -108,10 +127,10 @@ class AudioFingerprinterLMDB:
 
         print(f"   ✓ Opened {loaded_count} season databases")
         
-        # Preload all fingerprints into memory for fast lookups
-        print("📦 Preloading fingerprints into memory...")
-        self._preload_fingerprints()
-        print(f"   ✓ Preloaded {len(self.fingerprints_cache):,} unique hashes")
+        # Preload disabled for performance (use direct LMDB lookups)
+        # print("📦 Preloading fingerprints into memory...")
+        # self._preload_fingerprints()
+        # print(f"   ✓ Preloaded {len(self.fingerprints_cache):,} unique hashes")
 
     def _get_season_from_episode_id(self, episode_id: str) -> Optional[int]:
         """Extract season number from episode ID (e.g., 'S01E05' -> 1)."""
@@ -324,6 +343,20 @@ class AudioFingerprinterLMDB:
 
         print(f"✓ Added {len(fingerprints)} hashes for {episode_id} to season {season}")
 
+    def _get_hash_internal(self, season: int, h: int) -> List[Tuple[str, float]]:
+        """Internal method for individual cached lookups."""
+        db = self.season_dbs.get(season)
+        if not db:
+            return []
+        return db.get_hash(h)
+
+    def _get_hashes_internal(self, season: int, hash_ints: Tuple[int, ...]) -> Dict[int, List[Tuple[str, float]]]:
+        """Internal method for cached lookups."""
+        db = self.season_dbs.get(season)
+        if not db:
+            return {}
+        return db.get_hashes(list(hash_ints))
+
     def match_audio_array(
         self,
         audio_array: np.ndarray,
@@ -331,16 +364,13 @@ class AudioFingerprinterLMDB:
     ) -> Dict[str, Any]:
         """
         Match audio array against all LMDB databases.
-
-        Args:
-            audio_array: Query audio time series
-            sr: Sample rate
-
-        Returns:
-            Match result dictionary
+        Optimized for speed and accuracy across 20 seasons.
         """
         if not self.use_lmdb:
             raise NotImplementedError("match_audio_array requires LMDB mode")
+
+        import time
+        start_time = time.time()
 
         print("🔍 Fingerprinting query audio...")
         query_prints = self.fingerprint_audio_array(audio_array, sr)
@@ -351,118 +381,144 @@ class AudioFingerprinterLMDB:
 
         print(f"   Generated {len(query_prints)} query hashes")
 
-        # Sample if too many hashes (before searching)
-        max_query_hashes = 10000
-        if len(query_prints) > max_query_hashes:
-            step = len(query_prints) // max_query_hashes
-            query_prints = query_prints[::step]
-            print(f"📊 Sampling: Using {len(query_prints)} of {len(query_prints) * step} hashes")
+        # Common hash cache (in-memory, shared across requests)
+        if not hasattr(self, '_common_hashes'):
+            self._common_hashes = set()
 
-        print("📂 Searching across all databases...")
+        # Two-Pass matching
+        # Pass 1: 100 hashes (very fast)
+        # Pass 2: 900 more hashes (only if needed)
         
-        # Use preloaded cache for fast lookups
-        all_fingerprints = self._get_all_fingerprints_lmdb()
+        passes = [100, 900]
+        total_queried = 0
+        all_matches = defaultdict(list)
         
-        if not all_fingerprints:
-            print("Audio database is empty.")
-            return {}
-
-        # Filter out overly common hashes (but be less aggressive)
-        max_episodes_per_hash = 100  # Increased to allow more matches
-        filtered_prints = []
-        skipped_common = 0
-        not_found = 0
-        found_count = 0
-
-        for h, t_query in query_prints:
-            if h in all_fingerprints:
-                found_count += 1
-                # Only skip if hash appears in MANY episodes (likely noise)
-                if len(all_fingerprints[h]) > max_episodes_per_hash:
-                    skipped_common += 1
-                    continue
-                filtered_prints.append((h, t_query))
-            else:
-                not_found += 1
+        for pass_idx, num_hashes in enumerate(passes):
+            current_query = query_prints[total_queried : total_queried + num_hashes]
+            if not current_query:
+                break
+            
+            total_queried += len(current_query)
+            
+            # Filter out known common hashes
+            filtered_query = [h for h, t in current_query if h not in self._common_hashes]
+            if not filtered_query:
+                continue
                 
-        print(f"   Hash lookup: {found_count} found, {not_found} not found in database")
-        if skipped_common > 0:
-            print(f"⏭️  Skipped {skipped_common} common hashes (>{max_episodes_per_hash} episodes)")
+            unique_hashes = list(set(filtered_query))
+            
+            # 1. Collect matches
+            print(f"📂 Pass {pass_idx+1}: Searching {len(unique_hashes)} hashes...")
+            lookup_start = time.time()
+            
+            def search_db(season_db_tuple):
+                season, db = season_db_tuple
+                try:
+                    return season, db.get_hashes(unique_hashes)
+                except Exception as e:
+                    return season, {}
 
-        if skipped_common > 0:
-            print(f"⏭️  Skipped {skipped_common} common hashes")
+            with ThreadPoolExecutor(max_workers=min(len(self.season_dbs), 8)) as executor:
+                results = list(executor.map(search_db, self.season_dbs.items()))
+            
+            # Pre-map query hashes to their timestamps for fast lookup
+            query_map = defaultdict(list)
+            for h_q, t_q in current_query:
+                query_map[h_q].append(t_q)
+                
+            pass_matches = defaultdict(list)
+            for season, db_results in results:
+                for h, entries in db_results.items():
+                    # Global common hash detection
+                    if len(entries) > 1000:
+                        self._common_hashes.add(h)
+                        continue
+                        
+                    # Per-season filter
+                    if len(entries) <= 200:
+                        for ep_id, t_db in entries:
+                            for t_q in query_map[h]:
+                                offset = t_db - t_q
+                                all_matches[ep_id].append(offset)
+                                pass_matches[ep_id].append(offset)
+            
+            lookup_time = time.time() - lookup_start
+            print(f"   ⏱️  Pass {pass_idx+1} lookup: {lookup_time:.2f}s")
 
-        print(f"Searching {len(filtered_prints)} query hashes...")
-
-        # Find matches with time-aligned voting (fast in-memory lookups!)
-        matches: Dict[str, List[float]] = defaultdict(list)
-        match_count = 0
-
-        for h, t_query in filtered_prints:
-            if h in all_fingerprints:
-                for ep_id, t_db in all_fingerprints[h]:
-                    offset = t_db - t_query
-                    matches[ep_id].append(offset)
-                    match_count += 1
-
-        print(f"Found {match_count} raw matches across {len(matches)} episodes")
-
-        if not matches:
-            return {}
-
-        # Time-aligned voting
-        best_episode = None
-        best_count = 0
-        best_offset = 0.0
-
-        sorted_episodes = sorted(matches.items(), key=lambda x: len(x[1]), reverse=True)
-
-        for ep_id, offsets in sorted_episodes:
-            if len(offsets) < 5:
-                continue
-
-            # Limit processing
-            if len(offsets) > 5000:
-                offsets = offsets[:5000]
-
-            # Bin offsets (0.5s bins)
-            binned = [round(o * 2) / 2 for o in offsets]
-            counts = Counter(binned)
-
-            if not counts:
-                continue
-
-            mode_offset, count = counts.most_common(1)[0]
-
-            if count > best_count:
-                best_count = count
-                best_episode = ep_id
-                best_offset = mode_offset
-
-            # Early termination
-            if best_count > 100 and len(sorted_episodes) > 1:
-                next_ep_id, next_offsets = sorted_episodes[1]
-                if len(next_offsets) < best_count / 3:
-                    print(f"✓ Early termination: Clear winner")
+            # 2. Check for strong match in this pass
+            if pass_matches:
+                best_ep, best_off, best_cnt = self._find_best_alignment(pass_matches)
+                print(f"   🎯 Pass {pass_idx+1} best: {best_ep} ({best_cnt} aligned)")
+                # If we have a very strong match in the first pass, stop early
+                if pass_idx == 0 and best_cnt >= 20:
+                    print(f"🚀 Strong match found in Pass 1 ({best_cnt} aligned). Stopping early.")
+                    break
+                # If we have a decent match in the second pass, we're done
+                if pass_idx == 1 and best_cnt >= 15:
                     break
 
+        # 3. Final voting
+        if not all_matches:
+            return {}
+
+        best_episode, best_offset, best_count = self._find_best_alignment(all_matches)
+        
+        elapsed = time.time() - start_time
+        print(f"⏱️  Total matching took {elapsed:.2f}s")
         print(f"Best match: {best_episode} with {best_count} aligned hashes at {best_offset:.1f}s")
 
-        # Require minimum aligned matches
-        min_aligned = max(10, len(filtered_prints) * 0.03)
+        # 4. Confidence and Result
+        min_aligned = max(10, total_queried * 0.01)
 
         if best_episode and best_count >= min_aligned:
-            confidence = min(99, int((best_count / len(filtered_prints)) * 100))
+            confidence = min(99, int((best_count / total_queried) * 1000)) 
+            
             return {
                 "episode_id": best_episode,
                 "timestamp": max(0, best_offset),
                 "confidence": confidence,
                 "aligned_matches": best_count,
-                "total_matches": match_count,
-                "method": "audio_lmdb"
+                "total_matches": len(all_matches[best_episode]),
+                "method": "audio_lmdb_two_pass",
+                "processing_time": elapsed
             }
 
         return {}
+
+    def _find_best_alignment(self, matches_dict: Dict[str, List[float]]) -> Tuple[str, float, int]:
+        """Helper to find the best aligned match from a dictionary of offsets."""
+        best_ep = None
+        best_count = 0
+        best_offset = 0.0
+        
+        # Only check top 30 candidates
+        sorted_candidates = sorted(matches_dict.items(), key=lambda x: len(x[1]), reverse=True)[:30]
+        
+        for ep_id, offsets in sorted_candidates:
+            binned = [round(o * 2) / 2 for o in offsets]
+            counts = Counter(binned)
+            if not counts: continue
+            mode_offset, count = counts.most_common(1)[0]
+            if count > best_count:
+                best_count = count
+                best_ep = ep_id
+                best_offset = mode_offset
+        
+        return best_ep, best_offset, best_count
+
+    def match_clip(self, file_path: str) -> Dict[str, Any]:
+        """
+        Match a query clip against all databases.
+        Wrapper for match_audio_array that handles file loading.
+        """
+        print(f"🎵 Matching clip: {os.path.basename(file_path)}")
+        try:
+            # Load audio
+            y, sr = librosa.load(file_path, sr=self.sr, mono=True)
+            return self.match_audio_array(y, sr)
+        except Exception as e:
+            print(f"❌ Error matching clip {file_path}: {e}")
+            return {}
 
     def _preload_fingerprints(self):
         """Preload all fingerprints from all databases into memory."""
