@@ -8,10 +8,10 @@ import sys
 import os
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add backend directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
-from ingest_audio_sequential import ingest_season_sequential, get_already_ingested_episodes
+from scripts.ingestion.ingest_audio_sequential import ingest_season_sequential, get_already_ingested_episodes
 import pickle
 import glob
 

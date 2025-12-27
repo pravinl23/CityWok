@@ -12,6 +12,9 @@ from pathlib import Path
 import re
 import requests
 
+# Add backend directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
 def extract_episode_number(filename: str) -> tuple:
     """Extract season and episode numbers from filename."""
     match_sxe = re.search(r'[Ss](\d+)[Ee](\d+)', filename)

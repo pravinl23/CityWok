@@ -6,6 +6,10 @@ import os
 import pickle
 import glob
 from collections import defaultdict
+
+# Add backend directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
 from app.core.config import settings
 
 

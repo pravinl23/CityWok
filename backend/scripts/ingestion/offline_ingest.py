@@ -23,8 +23,8 @@ import re
 from pathlib import Path
 from typing import List, Tuple
 
-# Add app to path
-sys.path.insert(0, os.path.dirname(__file__))
+# Add backend directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from app.core.audio_utils import extract_audio_to_memory
 from app.services.audio_fingerprint_lmdb import AudioFingerprinterLMDB

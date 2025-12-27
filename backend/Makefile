@@ -7,12 +7,12 @@ help:
 	@echo "  make test-fast     - Run tests with minimal output"
 
 test:
-	pytest test_season_matching.py -v
+	pytest scripts/testing/test_season_matching.py -v
 
 test-seasons:
-	python test_season_matching.py
+	python scripts/testing/test_season_matching.py
 
 test-fast:
-	pytest test_season_matching.py -q
+	pytest scripts/testing/test_season_matching.py -q
 
 

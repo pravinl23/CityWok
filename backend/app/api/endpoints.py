@@ -1,12 +1,15 @@
 """CityWok API Endpoints - Audio-Only Identification"""
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Form
-from typing import Dict, Any, Optional
+from fastapi.responses import StreamingResponse
+from typing import Dict, Any, Optional, Callable
 import os
 import shutil
 import uuid
 import tempfile
 import subprocess
+import json
+import asyncio
 from app.core.config import settings
 
 # Audio fingerprinting - support both pickle and LMDB modes
@@ -222,11 +225,222 @@ async def get_stats():
     return {"error": "Audio service not available"}
 
 
+async def _send_progress(queue: asyncio.Queue, status: str, message: str = ""):
+    """Helper to send progress update via SSE."""
+    await queue.put({"status": status, "message": message})
+
+
+async def _identify_with_progress(
+    file: Optional[UploadFile],
+    url: Optional[str],
+    background_tasks: BackgroundTasks,
+    progress_queue: asyncio.Queue
+):
+    """Internal function to perform identification with progress updates."""
+    temp_path = None
+    source_name = "unknown"
+    
+    try:
+        # Get file (from upload or URL)
+        if url:
+            await _send_progress(progress_queue, "downloading", "Downloading video from URL...")
+            print(f"📥 Downloading from URL: {url}")
+            # Run download in thread pool since it's synchronous
+            loop = asyncio.get_event_loop()
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor() as executor:
+                temp_path = await loop.run_in_executor(
+                    executor,
+                    download_video_from_url,
+                    url
+                )
+            source_name = url[:50]
+        else:
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No filename provided")
+            
+            await _send_progress(progress_queue, "uploading", "Processing uploaded file...")
+            
+            filename_lower = file.filename.lower()
+            video_formats = ('.mp4', '.mov', '.avi', '.mpeg', '.mpg', '.mkv', '.webm')
+            audio_formats = ('.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma')
+            
+            if not filename_lower.endswith(video_formats + audio_formats):
+                raise HTTPException(status_code=400, detail="Invalid file format")
+            
+            file_id = str(uuid.uuid4())
+            temp_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}_{file.filename}")
+            os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+            
+            with open(temp_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            file.file.close()
+            
+            source_name = file.filename
+        
+        file_size = os.path.getsize(temp_path)
+        if file_size > 100 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 100MB)")
+        
+        print(f"🎵 Processing: {source_name} ({file_size / (1024*1024):.1f} MB)")
+
+        # Extract audio
+        await _send_progress(progress_queue, "extracting", "Extracting audio from file...")
+        
+        # OPTIMIZATION: Extract audio directly to memory (skip MP3 conversion)
+        if extract_audio_to_memory and hasattr(audio_matcher, 'match_audio_array'):
+            print("   Extracting audio to memory (skipping MP3 conversion)...")
+            import time
+            extract_start = time.time()
+            try:
+                # Run audio extraction in thread pool since it's synchronous
+                loop = asyncio.get_event_loop()
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor() as executor:
+                    audio_array, sr = await loop.run_in_executor(
+                        executor,
+                        lambda: extract_audio_to_memory(temp_path, sr=22050)
+                    )
+                extract_time = time.time() - extract_start
+                print(f"   ✓ Audio extracted in {extract_time:.2f}s")
+                
+                # Schedule cleanup of temp file
+                background_tasks.add_task(cleanup_file, temp_path)
+                
+                # Generate fingerprints
+                await _send_progress(progress_queue, "fingerprinting", "Generating audio fingerprints...")
+                
+                # Match using audio array directly (faster than disk I/O)
+                # We need to modify match_audio_array to accept a progress callback
+                result = await _match_with_progress(audio_matcher, audio_array, sr, progress_queue)
+            except Exception as e:
+                print(f"   ⚠️  In-memory extraction failed: {e}, falling back to MP3 conversion")
+                # Fallback to original method
+                await _send_progress(progress_queue, "converting", "Converting audio format...")
+                # Run conversion in thread pool since it's synchronous
+                loop = asyncio.get_event_loop()
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor() as executor:
+                    audio_path = await loop.run_in_executor(
+                        executor,
+                        convert_to_mp3,
+                        temp_path
+                    )
+                background_tasks.add_task(cleanup_file, audio_path)
+                if audio_path != temp_path:
+                    background_tasks.add_task(cleanup_file, temp_path)
+                
+                await _send_progress(progress_queue, "fingerprinting", "Generating audio fingerprints...")
+                # Run match_clip in thread pool since it's synchronous
+                loop = asyncio.get_event_loop()
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor() as executor:
+                    result = await loop.run_in_executor(
+                        executor,
+                        audio_matcher.match_clip,
+                        audio_path
+                    )
+        else:
+            # Fallback to original method (MP3 conversion)
+            await _send_progress(progress_queue, "converting", "Converting audio format...")
+            print("   Converting to MP3 for consistent fingerprinting...")
+            # Run conversion in thread pool since it's synchronous
+            loop = asyncio.get_event_loop()
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor() as executor:
+                audio_path = await loop.run_in_executor(
+                    executor,
+                    convert_to_mp3,
+                    temp_path
+                )
+            background_tasks.add_task(cleanup_file, audio_path)
+            if audio_path != temp_path:
+                background_tasks.add_task(cleanup_file, temp_path)
+            
+            await _send_progress(progress_queue, "fingerprinting", "Generating audio fingerprints...")
+            # Run match_clip in thread pool since it's synchronous
+            loop = asyncio.get_event_loop()
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor() as executor:
+                result = await loop.run_in_executor(
+                    executor,
+                    audio_matcher.match_clip,
+                    audio_path
+                )
+        
+        # Searching
+        await _send_progress(progress_queue, "searching", "Searching database for matches...")
+        
+        if result and result.get('episode_id'):
+            await _send_progress(progress_queue, "complete", "Match found!")
+            await progress_queue.put({
+                "match_found": True,
+                "episode": result['episode_id'],
+                "timestamp": format_time(result['timestamp']),
+                "confidence": result.get('confidence', 0),
+                "aligned_matches": result.get('aligned_matches', 0),
+                "total_matches": result.get('total_matches', 0)
+            })
+        else:
+            await _send_progress(progress_queue, "complete", "No match found")
+            await progress_queue.put({
+                "match_found": False,
+                "message": "No confident match found in database"
+            })
+        
+    except HTTPException as e:
+        await progress_queue.put({"error": e.detail, "status_code": e.status_code})
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        await progress_queue.put({"error": f"Identification failed: {str(e)}", "status_code": 500})
+
+
+async def _match_with_progress(audio_matcher, audio_array, sr, progress_queue):
+    """Wrapper for match_audio_array that sends progress updates."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    
+    # Generate fingerprints (this is fast, can be async)
+    await _send_progress(progress_queue, "fingerprinting", "Analyzing audio features...")
+    
+    # Run fingerprinting in thread pool (it's CPU-bound)
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as executor:
+        query_prints = await loop.run_in_executor(
+            executor,
+            audio_matcher.fingerprint_audio_array,
+            audio_array,
+            sr
+        )
+    
+    if not query_prints:
+        return {}
+    
+    await _send_progress(progress_queue, "searching", f"Searching {len(query_prints)} fingerprints in database...")
+    
+    # Run matching in thread pool (it's CPU-bound and may take time)
+    with ThreadPoolExecutor() as executor:
+        result = await loop.run_in_executor(
+            executor,
+            audio_matcher.match_audio_array,
+            audio_array,
+            sr
+        )
+    
+    if result and result.get('episode_id'):
+        await _send_progress(progress_queue, "matching", "Analyzing match quality...")
+    
+    return result
+
+
 @router.post("/identify")
 async def identify_episode(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
-    url: Optional[str] = Form(None)
+    url: Optional[str] = Form(None),
+    stream: Optional[str] = Form("false")
 ):
     """
     Identify episode from an audio/video clip using audio fingerprinting.
@@ -234,6 +448,7 @@ async def identify_episode(
     Accepts:
     - File upload (video or audio)
     - URL (TikTok, YouTube, etc.)
+    - stream: If "true", returns Server-Sent Events with progress updates
     """
     
     if not AUDIO_AVAILABLE or not audio_matcher:
@@ -242,6 +457,61 @@ async def identify_episode(
     if not file and not url:
         raise HTTPException(status_code=400, detail="Provide either a file or URL")
     
+    # Parse stream parameter (Form fields come as strings)
+    stream_enabled = stream and stream.lower() in ('true', '1', 'yes')
+    
+    # If streaming is requested, use SSE
+    if stream_enabled:
+        async def event_generator():
+            progress_queue = asyncio.Queue()
+            
+            # Start identification in background
+            task = asyncio.create_task(_identify_with_progress(file, url, background_tasks, progress_queue))
+            
+            try:
+                while True:
+                    try:
+                        # Wait for progress update or completion
+                        update = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+                        
+                        # Send SSE event
+                        if "error" in update:
+                            yield f"data: {json.dumps(update)}\n\n"
+                            break
+                        elif "match_found" in update:
+                            yield f"data: {json.dumps(update)}\n\n"
+                            break
+                        else:
+                            yield f"data: {json.dumps(update)}\n\n"
+                            
+                    except asyncio.TimeoutError:
+                        # Check if task is done
+                        if task.done():
+                            # Get any remaining updates
+                            while not progress_queue.empty():
+                                update = await progress_queue.get()
+                                yield f"data: {json.dumps(update)}\n\n"
+                            break
+                        continue
+                        
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e), 'status_code': 500})}\n\n"
+            finally:
+                # Wait for task to complete
+                if not task.done():
+                    await task
+        
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    
+    # Non-streaming mode (original behavior)
     temp_path = None
     source_name = "unknown"
     
