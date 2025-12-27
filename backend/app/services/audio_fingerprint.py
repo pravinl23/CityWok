@@ -22,7 +22,7 @@ class AudioFingerprinter:
         for season in range(1, 21)
     }
     
-    def __init__(self):
+    def __init__(self, lazy_load: bool = None):
         self.data_dir = settings.DATA_DIR
         self.max_seasons = int(os.getenv('MAX_SEASONS', '20'))
         
@@ -43,9 +43,22 @@ class AudioFingerprinter:
         self.episode_list: List[str] = []
         self.episode_to_idx: Dict[str, int] = {}
         
+        # Track which databases are loaded (for lazy loading)
+        self.loaded_seasons: set = set()
+        
+        # Check for lazy loading flag (default: False for backward compatibility)
+        if lazy_load is None:
+            lazy_load = os.getenv('LAZY_LOAD_PICKLE', 'false').lower() in ('true', '1', 'yes')
+        self.lazy_load = lazy_load
+        
         self._scan_databases()
-        print(f"📦 Eager loading all {len(self.existing_dbs)} databases into memory (optimized)...")
-        self._load_all_databases()
+        
+        if self.lazy_load:
+            print(f"📦 Lazy loading mode: Skipping initial database load (will load on-demand)")
+            print(f"   Found {len(self.existing_dbs)} existing databases")
+        else:
+            print(f"📦 Eager loading all {len(self.existing_dbs)} databases into memory (optimized)...")
+            self._load_all_databases()
 
     def _scan_databases(self):
         self.existing_dbs = []
@@ -56,44 +69,68 @@ class AudioFingerprinter:
                 if os.path.exists(db_path):
                     self.existing_dbs.append(db_file)
 
+    def _load_database(self, season: int) -> bool:
+        """Load a single database file for a season. Returns True if loaded successfully."""
+        if season in self.loaded_seasons:
+            return True  # Already loaded
+        
+        db_file = self.DB_CONFIG.get(season)
+        if not db_file:
+            return False
+        
+        db_path = os.path.join(self.data_dir, db_file)
+        if not os.path.exists(db_path):
+            return False
+        
+        try:
+            print(f"📂 Loading {db_file}...")
+            dtype = [('ep_idx', 'u2'), ('offset', 'f4')]
+            
+            with open(db_path, 'rb') as f:
+                data = pickle.load(f)
+            
+            raw_prints = data['fingerprints'] if isinstance(data, dict) and 'fingerprints' in data else data
+            
+            for h, entries in raw_prints.items():
+                # Convert entries for this hash to a small numpy array
+                new_entries = []
+                for ep_id, offset in entries:
+                    if ep_id not in self.episode_to_idx:
+                        self.episode_to_idx[ep_id] = len(self.episode_list)
+                        self.episode_list.append(ep_id)
+                    new_entries.append((self.episode_to_idx[ep_id], offset))
+                
+                new_arr = np.array(new_entries, dtype=dtype)
+                
+                # Merge with existing array for this hash
+                if h in self.fingerprints:
+                    self.fingerprints[h] = np.concatenate([self.fingerprints[h], new_arr])
+                else:
+                    self.fingerprints[h] = new_arr
+            
+            self.loaded_seasons.add(season)
+            print(f"   ✓ Loaded {db_file} (RAM: {sum(a.nbytes for a in self.fingerprints.values()) / 1024 / 1024:.1f}MB)")
+            del data  # Explicitly free memory
+            return True
+        except Exception as e:
+            print(f"   ❌ Error loading {db_file}: {e}")
+            return False
+    
     def _load_all_databases(self):
+        """Load all existing databases into memory."""
         start_time = time.time()
-        dtype = [('ep_idx', 'u2'), ('offset', 'f4')]
         
         for db_file in self.existing_dbs:
-            db_path = os.path.join(self.data_dir, db_file)
-            try:
-                print(f"📂 Loading {db_file}...")
-                with open(db_path, 'rb') as f:
-                    data = pickle.load(f)
-                
-                raw_prints = data['fingerprints'] if isinstance(data, dict) and 'fingerprints' in data else data
-                
-                for h, entries in raw_prints.items():
-                    # Convert entries for this hash to a small numpy array
-                    new_entries = []
-                    for ep_id, offset in entries:
-                        if ep_id not in self.episode_to_idx:
-                            self.episode_to_idx[ep_id] = len(self.episode_list)
-                            self.episode_list.append(ep_id)
-                        new_entries.append((self.episode_to_idx[ep_id], offset))
-                    
-                    new_arr = np.array(new_entries, dtype=dtype)
-                    
-                    # Merge with existing array for this hash
-                    if h in self.fingerprints:
-                        self.fingerprints[h] = np.concatenate([self.fingerprints[h], new_arr])
-                    else:
-                        self.fingerprints[h] = new_arr
-                
-                print(f"   ✓ Loaded {db_file} (RAM: {sum(a.nbytes for a in self.fingerprints.values()) / 1024 / 1024:.1f}MB)")
-                del data # Explicitly free memory
-            except Exception as e:
-                print(f"   ❌ Error loading {db_file}: {e}")
+            # Extract season number from filename
+            match = re.search(r's(\d+)', db_file)
+            if match:
+                season = int(match.group(1))
+                self._load_database(season)
 
         elapsed = time.time() - start_time
-        print(f"✅ Loaded {len(self.fingerprints):,} unique hashes in {elapsed:.1f}s")
-        print(f"📊 Final Data Size: {sum(a.nbytes for a in self.fingerprints.values()) / 1024 / 1024:.1f}MB")
+        if self.fingerprints:
+            print(f"✅ Loaded {len(self.fingerprints):,} unique hashes in {elapsed:.1f}s")
+            print(f"📊 Final Data Size: {sum(a.nbytes for a in self.fingerprints.values()) / 1024 / 1024:.1f}MB")
 
     def _get_spectrogram_peaks(self, y: np.ndarray) -> List[Tuple[int, int]]:
         S = np.abs(librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length))
@@ -126,6 +163,11 @@ class AudioFingerprinter:
         return hashes
 
     def match_audio_array(self, audio_array: np.ndarray, sr: int) -> Dict[str, Any]:
+        # Lazy load all databases if in lazy mode and not yet loaded
+        if self.lazy_load and len(self.loaded_seasons) < len(self.existing_dbs):
+            print("📦 Lazy loading databases for matching...")
+            self._load_all_databases()
+        
         start_time = time.time()
         peaks = self._get_spectrogram_peaks(audio_array)
         query_prints = self._create_hashes(peaks)
@@ -296,8 +338,171 @@ class AudioFingerprinter:
             "total_entries": total_entries,
             "episodes": len(self.episode_list),
             "avg_hashes_per_episode": total_entries / max(1, len(self.episode_list)),
-            "loaded_databases": len(self.existing_dbs)
+            "loaded_databases": len(self.loaded_seasons),
+            "existing_databases": len(self.existing_dbs),
+            "lazy_load_mode": self.lazy_load
         }
+    
+    def _get_season_from_episode_id(self, episode_id: str) -> Optional[int]:
+        """Extract season number from episode ID (e.g., 'S01E05' -> 1)."""
+        match = re.search(r'[Ss](\d+)', episode_id)
+        if match:
+            return int(match.group(1))
+        return None
+    
+    def fingerprint_audio_array(self, audio_array: np.ndarray, sr: int) -> List[Tuple[str, float]]:
+        """Generate fingerprints from audio array. Returns list of (hash, offset) tuples."""
+        peaks = self._get_spectrogram_peaks(audio_array)
+        return self._create_hashes(peaks)
+    
+    def add_episode(self, episode_id: str, file_path: str) -> bool:
+        """
+        Add an episode to the database.
+        
+        Args:
+            episode_id: Episode identifier (e.g., 'S04E05')
+            file_path: Path to audio/video file
+            
+        Returns:
+            True if successful
+        """
+        try:
+            # Load audio
+            y, sr = librosa.load(file_path, sr=self.sr, mono=True)
+            return self.add_episode_array(episode_id, y, sr)
+        except Exception as e:
+            print(f"Error adding episode {episode_id}: {e}")
+            return False
+    
+    def add_episode_array(self, episode_id: str, audio_array: np.ndarray, sr: int) -> bool:
+        """
+        Add an episode from audio array.
+        
+        Args:
+            episode_id: Episode identifier (e.g., 'S04E05')
+            audio_array: Audio time series
+            sr: Sample rate
+            
+        Returns:
+            True if successful
+        """
+        # Generate fingerprints
+        fingerprints = self.fingerprint_audio_array(audio_array, sr)
+        
+        if not fingerprints:
+            print(f"⚠️  No fingerprints generated for {episode_id}")
+            return False
+        
+        # Determine season
+        season = self._get_season_from_episode_id(episode_id)
+        if season is None:
+            print(f"⚠️  Cannot determine season from episode ID: {episode_id}")
+            return False
+        
+        # Load the season database if not already loaded (for merging)
+        if season not in self.loaded_seasons:
+            self._load_database(season)
+        
+        # Add episode to episode list if not present
+        if episode_id not in self.episode_to_idx:
+            self.episode_to_idx[episode_id] = len(self.episode_list)
+            self.episode_list.append(episode_id)
+        
+        ep_idx = self.episode_to_idx[episode_id]
+        dtype = [('ep_idx', 'u2'), ('offset', 'f4')]
+        
+        # Group fingerprints by hash and add to in-memory database
+        for h, offset in fingerprints:
+            new_entry = np.array([(ep_idx, offset)], dtype=dtype)
+            
+            if h in self.fingerprints:
+                self.fingerprints[h] = np.concatenate([self.fingerprints[h], new_entry])
+            else:
+                self.fingerprints[h] = new_entry
+        
+        print(f"✓ Added {episode_id}: {len(fingerprints)} fingerprints")
+        return True
+    
+    def force_save_all(self):
+        """Save all in-memory fingerprints to pickle files, organized by season."""
+        print("💾 Saving all databases to pickle files...")
+        
+        # Group fingerprints by season
+        season_fingerprints: Dict[int, Dict[str, List[Tuple[str, float]]]] = defaultdict(lambda: defaultdict(list))
+        
+        # Convert in-memory format back to per-season format
+        for h, arr in self.fingerprints.items():
+            for entry in arr:
+                ep_idx = entry['ep_idx']
+                offset = entry['offset']
+                ep_id = self.episode_list[ep_idx]
+                season = self._get_season_from_episode_id(ep_id)
+                if season:
+                    season_fingerprints[season][h].append((ep_id, offset))
+        
+        # Save each season database
+        saved_count = 0
+        for season, fingerprints in season_fingerprints.items():
+            db_file = self.DB_CONFIG.get(season)
+            if not db_file:
+                continue
+            
+            db_path = os.path.join(self.data_dir, db_file)
+            
+            # Load existing database if it exists and merge
+            existing_fingerprints = {}
+            if os.path.exists(db_path):
+                try:
+                    with open(db_path, 'rb') as f:
+                        existing_data = pickle.load(f)
+                    existing_fingerprints = existing_data.get('fingerprints', existing_data) if isinstance(existing_data, dict) else existing_data
+                except Exception as e:
+                    print(f"   ⚠️  Could not load existing {db_file}: {e}")
+            
+            # Merge with existing
+            for h, entries in existing_fingerprints.items():
+                if h not in fingerprints:
+                    fingerprints[h] = entries
+                else:
+                    # Merge entries, avoiding duplicates
+                    existing_ep_offsets = set((ep_id, round(offset, 2)) for ep_id, offset in fingerprints[h])
+                    for ep_id, offset in entries:
+                        if (ep_id, round(offset, 2)) not in existing_ep_offsets:
+                            fingerprints[h].append((ep_id, offset))
+            
+            # Count episodes in this season
+            episode_counts = {}
+            for h, entries in fingerprints.items():
+                for ep_id, _ in entries:
+                    if ep_id not in episode_counts:
+                        episode_counts[ep_id] = 0
+                    episode_counts[ep_id] += 1
+            
+            # Save to pickle file
+            try:
+                save_data = {
+                    'fingerprints': dict(fingerprints),
+                    'counts': episode_counts,
+                    'season': season
+                }
+                
+                with open(db_path, 'wb') as f:
+                    pickle.dump(save_data, f)
+                
+                print(f"   ✓ Saved {db_file} ({len(fingerprints):,} hashes, {len(episode_counts)} episodes)")
+                saved_count += 1
+            except Exception as e:
+                print(f"   ❌ Error saving {db_file}: {e}")
+        
+        print(f"✅ Saved {saved_count} database files")
+    
+    def clear_db(self):
+        """Clear all in-memory fingerprints (for testing)."""
+        self.fingerprints.clear()
+        self.episode_list.clear()
+        self.episode_to_idx.clear()
+        self.loaded_seasons.clear()
+        print("🗑️  Cleared all fingerprints from memory")
 
-# Global instance
+# Global instance - use lazy loading if environment variable is set
 audio_matcher = AudioFingerprinter()

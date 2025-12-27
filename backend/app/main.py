@@ -44,8 +44,12 @@ async def startup_event():
             import traceback
             traceback.print_exc()
     else:
-        print("\n🔧 Using pickle mode (legacy)")
-        # Databases will be eagerly loaded in AudioFingerprinter.__init__
+        LAZY_LOAD = os.getenv('LAZY_LOAD_PICKLE', 'false').lower() in ('true', '1', 'yes')
+        if LAZY_LOAD:
+            print("\n🔧 Using pickle mode with lazy loading (fast startup)")
+        else:
+            print("\n🔧 Using pickle mode (legacy - eager loading)")
+        # Databases will be loaded in AudioFingerprinter.__init__ (eager or lazy based on env var)
 
     print("="*60)
     print("✓ Startup complete!")
