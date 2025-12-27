@@ -10,6 +10,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 function App() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [statusMessage, setStatusMessage] = useState('')
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [url, setUrl] = useState('')
@@ -83,49 +84,92 @@ function App() {
     setLoading(true)
     setError(null)
     setResult(null)
+    setStatusMessage('')
     
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('stream', 'true')
     
     try {
-      const response = await axios.post(`${API_URL}/api/v1/identify`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        },
-        timeout: 300000
+      // Use fetch for Server-Sent Events
+      const response = await fetch(`${API_URL}/api/v1/identify`, {
+        method: 'POST',
+        body: formData,
+        // Don't set Content-Type header, browser will set it with boundary
       })
-      setResult(response.data)
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              
+              // Handle progress updates
+              if (data.status) {
+                setStatusMessage(data.message || getStatusMessage(data.status))
+              }
+              
+              // Handle final result
+              if (data.match_found !== undefined) {
+                setResult(data)
+                setStatusMessage('')
+              }
+              
+              // Handle errors
+              if (data.error) {
+                setError(data.error)
+                setStatusMessage('')
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e)
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error(err)
 
       // Handle different error types
-      if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+      if (err.name === 'AbortError' || err.message.includes('timeout')) {
         setError("Request timed out. The file might be too large or the server is busy. Please try again.");
-      } else if (err.response) {
-        // Server responded with error
-        const status = err.response.status;
-        const detail = err.response.data?.detail || err.response.data?.message;
-
-        if (status === 400) {
-          setError(detail || "Invalid file or request. Please check your file and try again.");
-        } else if (status === 413) {
-          setError("File too large! Maximum size is 100MB.");
-        } else if (status === 500) {
-          setError("Server error occurred. Please try again later.");
-        } else if (status === 502 || status === 503) {
-          setError("Server is temporarily unavailable. Please try again in a moment.");
-        } else {
-          setError(detail || `Error ${status}: An error occurred during identification.`);
-        }
-      } else if (err.request) {
-        // Request made but no response
-        setError("Cannot connect to server. Please check your internet connection or try again later.");
+      } else if (err.message.includes('HTTP error')) {
+        setError("Server error occurred. Please try again later.");
       } else {
         setError("An unexpected error occurred. Please try again.");
       }
+      setStatusMessage('')
     } finally {
       setLoading(false)
     }
+  }
+  
+  const getStatusMessage = (status) => {
+    const messages = {
+      'uploading': 'Processing file...',
+      'downloading': 'Downloading video...',
+      'extracting': 'Extracting audio...',
+      'converting': 'Preparing audio...',
+      'fingerprinting': 'Analyzing audio...',
+      'searching': 'Searching for matches...',
+      'matching': 'Verifying match...',
+      'complete': 'Complete!'
+    }
+    return messages[status] || 'Processing...'
   }
 
   const handleUrlSubmit = async () => {
@@ -137,44 +181,74 @@ function App() {
     setLoading(true)
     setError(null)
     setResult(null)
+    setStatusMessage('')
     
     const formData = new FormData()
     formData.append('url', url.trim())
+    formData.append('stream', 'true')
     
     try {
-      const response = await axios.post(`${API_URL}/api/v1/identify`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        },
-        timeout: 300000
+      // Use fetch for Server-Sent Events
+      const response = await fetch(`${API_URL}/api/v1/identify`, {
+        method: 'POST',
+        body: formData,
       })
-      setResult(response.data)
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              
+              // Handle progress updates
+              if (data.status) {
+                setStatusMessage(data.message || getStatusMessage(data.status))
+              }
+              
+              // Handle final result
+              if (data.match_found !== undefined) {
+                setResult(data)
+                setStatusMessage('')
+              }
+              
+              // Handle errors
+              if (data.error) {
+                setError(data.error)
+                setStatusMessage('')
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e)
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error(err)
 
       // Handle different error types for URL submission
-      if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+      if (err.name === 'AbortError' || err.message.includes('timeout')) {
         setError("Request timed out. The URL might be unavailable or the server is busy. Please try again.");
-      } else if (err.response) {
-        const status = err.response.status;
-        const detail = err.response.data?.detail || err.response.data?.message;
-
-        if (status === 400) {
-          setError(detail || "Invalid URL. Please check the URL and try again.");
-        } else if (status === 408) {
-          setError("Download timeout. The video took too long to download. Try a shorter clip.");
-        } else if (status === 500) {
-          setError("Server error occurred. Please try again later.");
-        } else if (status === 502 || status === 503) {
-          setError("Server is temporarily unavailable. Please try again in a moment.");
-        } else {
-          setError(detail || `Error ${status}: Could not process URL.`);
-        }
-      } else if (err.request) {
-        setError("Cannot connect to server. Please check your internet connection or try again later.");
+      } else if (err.message.includes('HTTP error')) {
+        setError("Server error occurred. Please try again later.");
       } else {
         setError("An unexpected error occurred. Please try again.");
       }
+      setStatusMessage('')
     } finally {
       setLoading(false)
     }
@@ -226,7 +300,7 @@ function App() {
               onClick={handleIdentify}
               disabled={!file || loading}
             >
-              {loading ? 'PROCESSING...' : 'UPLOAD FILE'}
+              {loading ? (statusMessage || 'PROCESSING...') : 'UPLOAD FILE'}
             </button>
 
             <p className="or-text">OR PASTE URL</p>
@@ -242,10 +316,10 @@ function App() {
               <button 
                 className="find-btn"
                 onClick={handleUrlSubmit}
-                disabled={!url.trim()}
+                disabled={!url.trim() || loading}
               >
-                FIND IT
-        </button>
+                {loading ? (statusMessage || 'PROCESSING...') : 'FIND IT'}
+              </button>
             </div>
 
             {error && <div className="error-message">{error}</div>}

@@ -14,6 +14,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.pytest_cache/
 
 # Data files (databases)
 backend/data/

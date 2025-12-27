@@ -73,12 +73,23 @@ Your episode files should be organized like:
 
 Supported formats: MP4, MOV, AVI, MKV, MPG, MPEG
 
+### Configuration
+
+By default, ingestion scripts look for episodes in `/Users/pravinlohani/Downloads/`.
+
+To use a different location, set the `EPISODES_DIR` environment variable:
+
+```bash
+export EPISODES_DIR=/path/to/your/episodes
+./backend/scripts/ingest_season.sh 6
+```
+
 ### Ingest All Seasons (Recommended)
 
 From the project root directory:
 
 ```bash
-./ingest_all_seasons.sh 1 20
+./backend/scripts/ingest_all_seasons.sh 1 20
 ```
 
 This will:
@@ -90,7 +101,7 @@ This will:
 ### Ingest a Single Season
 
 ```bash
-./ingest_season.sh 6
+./backend/scripts/ingest_season.sh 6
 ```
 
 This will ingest only Season 6 and create `audio_fingerprints_s06.pkl`
@@ -102,14 +113,14 @@ If you prefer to run the Python script directly:
 ```bash
 cd backend
 source venv/bin/activate
-python ingest_audio_sequential.py "/path/to/Season 1" 1
+python scripts/ingestion/ingest_audio_sequential.py "/path/to/Season 1" 1
 ```
 
 ### Check Database Status
 
 ```bash
 cd backend
-python check_db.py
+python scripts/database/check_db.py
 ```
 
 This will show you all ingested episodes and their fingerprint counts.
