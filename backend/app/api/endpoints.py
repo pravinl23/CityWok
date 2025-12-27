@@ -81,24 +81,27 @@ def download_video_from_url(url: str) -> str:
         'outtmpl': tmp_path,
         'quiet': False,  # Show progress
         'no_warnings': False,
-        'format': 'best[ext=mp4]/best',
+        'format': 'bestaudio[ext=m4a]/bestaudio/worstaudio',  # Audio-only for 10-20x faster downloads
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': url,
         },
         'progress_hooks': [progress_hook],
-        'socket_timeout': 30,  # 30 second socket timeout
+        'socket_timeout': 15,  # Reduced from 30 (smaller audio files)
         'noplaylist': True,
+        'concurrent_fragment_downloads': 4,  # Download 4 fragments in parallel
+        'prefer_free_formats': True,  # Prefer webm/opus (smaller than m4a)
+        'postprocessors': [],  # No post-processing needed
     }
     
     try:
-        print(f"   Starting download (timeout: 120s)...")
+        print(f"   Starting download (timeout: 30s)...")
         import threading
         import time
-        
+
         download_complete = threading.Event()
         download_error = [None]
-        
+
         def download_thread():
             try:
                 with YoutubeDL(ydl_opts) as ydl:
@@ -107,13 +110,13 @@ def download_video_from_url(url: str) -> str:
             except Exception as e:
                 download_error[0] = e
                 download_complete.set()
-        
+
         thread = threading.Thread(target=download_thread, daemon=True)
         thread.start()
-        
-        # Wait up to 120 seconds
-        if not download_complete.wait(timeout=120):
-            raise HTTPException(status_code=408, detail="Download timeout after 120 seconds - URL may be slow or unavailable")
+
+        # Wait up to 30 seconds (audio-only downloads are much faster)
+        if not download_complete.wait(timeout=30):
+            raise HTTPException(status_code=408, detail="Download timeout after 30 seconds - URL may be slow or unavailable")
         
         if download_error[0]:
             raise download_error[0]
