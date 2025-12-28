@@ -37,14 +37,19 @@ class AudioFingerprinter:
         self.min_freq = 300
         self.max_freq = 8000
         
-        # Memory-efficient storage
-        # hash (str) -> numpy array of dtype=[('ep_idx', 'u2'), ('offset', 'f4')]
-        self.fingerprints: Dict[str, np.ndarray] = {}
-        self.episode_list: List[str] = []
-        self.episode_to_idx: Dict[str, int] = {}
-        
+        # Per-season storage for parallel matching
+        # season_num -> {hash -> numpy array of dtype=[('ep_idx', 'u2'), ('offset', 'f4')]}
+        self.season_fingerprints: Dict[int, Dict[str, np.ndarray]] = {}
+        # season_num -> [episode_ids]
+        self.season_episodes: Dict[int, List[str]] = {}
+        # season_num -> {ep_id -> ep_idx}
+        self.season_episode_to_idx: Dict[int, Dict[str, int]] = {}
+
         # Track which databases are loaded (for lazy loading)
         self.loaded_seasons: set = set()
+
+        # Number of parallel workers for season matching
+        self.num_workers = int(os.getenv('MATCH_WORKERS', '16'))
         
         # Check for lazy loading flag (default: False for backward compatibility)
         if lazy_load is None:
@@ -85,31 +90,33 @@ class AudioFingerprinter:
         try:
             print(f"📂 Loading {db_file}...")
             dtype = [('ep_idx', 'u2'), ('offset', 'f4')]
-            
+
             with open(db_path, 'rb') as f:
                 data = pickle.load(f)
-            
+
             raw_prints = data['fingerprints'] if isinstance(data, dict) and 'fingerprints' in data else data
-            
+
+            # Initialize season storage
+            self.season_fingerprints[season] = {}
+            self.season_episodes[season] = []
+            self.season_episode_to_idx[season] = {}
+
             for h, entries in raw_prints.items():
                 # Convert entries for this hash to a small numpy array
                 new_entries = []
                 for ep_id, offset in entries:
-                    if ep_id not in self.episode_to_idx:
-                        self.episode_to_idx[ep_id] = len(self.episode_list)
-                        self.episode_list.append(ep_id)
-                    new_entries.append((self.episode_to_idx[ep_id], offset))
-                
+                    if ep_id not in self.season_episode_to_idx[season]:
+                        self.season_episode_to_idx[season][ep_id] = len(self.season_episodes[season])
+                        self.season_episodes[season].append(ep_id)
+                    ep_idx = self.season_episode_to_idx[season][ep_id]
+                    new_entries.append((ep_idx, offset))
+
                 new_arr = np.array(new_entries, dtype=dtype)
-                
-                # Merge with existing array for this hash
-                if h in self.fingerprints:
-                    self.fingerprints[h] = np.concatenate([self.fingerprints[h], new_arr])
-                else:
-                    self.fingerprints[h] = new_arr
-            
+                self.season_fingerprints[season][h] = new_arr
+
             self.loaded_seasons.add(season)
-            print(f"   ✓ Loaded {db_file} (RAM: {sum(a.nbytes for a in self.fingerprints.values()) / 1024 / 1024:.1f}MB)")
+            season_size = sum(a.nbytes for a in self.season_fingerprints[season].values()) / 1024 / 1024
+            print(f"   ✓ Loaded {db_file} ({len(self.season_episodes[season])} episodes, {season_size:.1f}MB)")
             del data  # Explicitly free memory
             return True
         except Exception as e:
@@ -128,9 +135,14 @@ class AudioFingerprinter:
                 self._load_database(season)
 
         elapsed = time.time() - start_time
-        if self.fingerprints:
-            print(f"✅ Loaded {len(self.fingerprints):,} unique hashes in {elapsed:.1f}s")
-            print(f"📊 Final Data Size: {sum(a.nbytes for a in self.fingerprints.values()) / 1024 / 1024:.1f}MB")
+        if self.season_fingerprints:
+            total_eps = sum(len(eps) for eps in self.season_episodes.values())
+            total_size = sum(
+                sum(a.nbytes for a in fps.values())
+                for fps in self.season_fingerprints.values()
+            ) / 1024 / 1024
+            print(f"✅ Loaded {len(self.loaded_seasons)} seasons ({total_eps} episodes) in {elapsed:.1f}s")
+            print(f"📊 Total Data Size: {total_size:.1f}MB | {self.num_workers} parallel workers")
 
     def _get_spectrogram_peaks(self, y: np.ndarray) -> List[Tuple[int, int]]:
         S = np.abs(librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length))
@@ -162,136 +174,94 @@ class AudioFingerprinter:
                     hashes.append((h, anchor_time))
         return hashes
 
+    def _match_season(self, season: int, query_prints: List[Tuple[str, float]]) -> Dict[str, List[float]]:
+        """Match query hashes against a single season's database."""
+        season_matches = defaultdict(list)
+
+        fingerprints = self.season_fingerprints.get(season, {})
+        episode_list = self.season_episodes.get(season, [])
+
+        if not fingerprints:
+            return season_matches
+
+        for h, t_q in query_prints:
+            if h in fingerprints:
+                arr = fingerprints[h]
+                # Skip overly common hashes within this season
+                if len(arr) > 1000:  # Per-season threshold
+                    continue
+                for x in arr:
+                    ep_idx = x['ep_idx']
+                    t_db = x['offset']
+                    ep_id = episode_list[ep_idx]
+                    offset = t_db - t_q
+                    season_matches[ep_id].append(offset)
+
+        return season_matches
+
     def match_audio_array(self, audio_array: np.ndarray, sr: int) -> Dict[str, Any]:
         # Lazy load all databases if in lazy mode and not yet loaded
         if self.lazy_load and len(self.loaded_seasons) < len(self.existing_dbs):
             print("📦 Lazy loading databases for matching...")
             self._load_all_databases()
-        
+
         start_time = time.time()
         peaks = self._get_spectrogram_peaks(audio_array)
         query_prints = self._create_hashes(peaks)
         if not query_prints: return {}
-        
-        # Uniformly sample hashes from the entire query to avoid being stuck in intros/silence
+
         total_query_hashes = len(query_prints)
-        print(f"🔍 Searching {total_query_hashes} query hashes (sampled)...")
-        
-        # Two-Pass matching with uniform sampling
-        # Pass 1: 1000 hashes sampled uniformly
-        # Pass 2: 4000 more hashes sampled uniformly
-        passes = [1000, 4000]
+        print(f"🔍 Searching {total_query_hashes} query hashes across {len(self.loaded_seasons)} seasons in parallel...")
+
+        # Sample query hashes (use first 5000 for speed)
+        sample_size = min(5000, total_query_hashes)
+        step = max(1, total_query_hashes // sample_size)
+        sampled_query = query_prints[::step][:sample_size]
+
+        # Search all seasons in parallel
         all_matches = defaultdict(list)
-        
-        # Global common hash cache (detect once and skip)
-        if not hasattr(self, '_common_hashes'):
-            self._common_hashes = set()
-            # Relaxed threshold: 20,000 entries total (across 20 seasons)
-            # This avoids filtering out hashes that are frequent in just one episode
-            for h, arr in self.fingerprints.items():
-                if len(arr) > 20000:
-                    self._common_hashes.add(h)
-            print(f"   - Filtered {len(self._common_hashes):,} extremely common hashes")
 
-        queried_indices = set()
-        
-        for pass_idx, num_to_query in enumerate(passes):
-            # Sample indices we haven't queried yet
-            remaining_indices = [i for i in range(total_query_hashes) if i not in queried_indices]
-            if not remaining_indices: break
-            
-            # Take a uniform sample
-            sample_size = min(num_to_query, len(remaining_indices))
-            step = max(1, len(remaining_indices) // sample_size)
-            current_indices = remaining_indices[::step][:sample_size]
-            queried_indices.update(current_indices)
-            
-            current_query = [query_prints[i] for i in current_indices]
-            
-            # OPTIMIZATION: Parallelize hash matching using threading (I/O-bound operation)
-            pass_matches = defaultdict(list)
-            
-            num_workers = min(8, len(current_query) // 100)  # Use threads for chunks of 100+ hashes
-            chunk_size = max(100, len(current_query) // num_workers) if num_workers > 1 else len(current_query)
-            
-            def match_hash_chunk(chunk):
-                """Match a chunk of query hashes against database (thread-safe)."""
-                chunk_matches = defaultdict(list)
-                for h, t_q in chunk:
-                    if h in self.fingerprints and h not in self._common_hashes:
-                        arr = self.fingerprints[h]
-                        # Dynamic filtering (relaxed)
-                        if len(arr) > 20000:
-                            # Note: Adding to common_hashes is not thread-safe, but acceptable for performance
-                            continue
-                        for x in arr:
-                            ep_idx = x['ep_idx']
-                            t_db = x['offset']
-                            ep_id = self.episode_list[ep_idx]
-                            offset = t_db - t_q
-                            chunk_matches[ep_id].append(offset)
-                return chunk_matches
-            
-            # Split query into chunks and process in parallel
-            if len(current_query) > 200 and num_workers > 1:
-                query_chunks = [current_query[i:i+chunk_size] for i in range(0, len(current_query), chunk_size)]
-                
-                with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                    futures = [executor.submit(match_hash_chunk, chunk) for chunk in query_chunks]
-                    for future in as_completed(futures):
-                        chunk_result = future.result()
-                        for ep_id, offsets in chunk_result.items():
-                            all_matches[ep_id].extend(offsets)
-                            pass_matches[ep_id].extend(offsets)
-            else:
-                # Sequential processing for small queries
-                for h, t_q in current_query:
-                    if h in self.fingerprints and h not in self._common_hashes:
-                        arr = self.fingerprints[h]
-                        if len(arr) > 20000:
-                            self._common_hashes.add(h)
-                            continue
-                        for x in arr:
-                            ep_idx = x['ep_idx']
-                            t_db = x['offset']
-                            ep_id = self.episode_list[ep_idx]
-                            offset = t_db - t_q
-                            all_matches[ep_id].append(offset)
-                            pass_matches[ep_id].append(offset)
-            
-            # Check for strong match
-            if pass_matches:
-                best_ep, best_off, best_cnt, _ = self._find_best_alignment(pass_matches)
-                # Strong match in Pass 1
-                if pass_idx == 0 and best_cnt >= 30:
-                    print(f"🚀 Strong match in Pass 1 ({best_cnt} aligned). Stopping.")
-                    break
-                # Decent match in Pass 2
-                if pass_idx == 1 and best_cnt >= 25:
-                    break
+        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+            # Submit one task per season
+            future_to_season = {
+                executor.submit(self._match_season, season, sampled_query): season
+                for season in self.loaded_seasons
+            }
 
-        if not all_matches: return {}
-        
+            # Collect results as they complete
+            for future in as_completed(future_to_season):
+                season = future_to_season[future]
+                try:
+                    season_matches = future.result()
+                    for ep_id, offsets in season_matches.items():
+                        all_matches[ep_id].extend(offsets)
+                except Exception as e:
+                    print(f"   ⚠️  Error matching season {season}: {e}")
+
+        if not all_matches:
+            print("   ❌ No matches found")
+            return {}
+
+        # Find best match
         best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(all_matches)
-        
+
         elapsed = time.time() - start_time
-        print(f"⏱️  Matching took {elapsed:.2f}s")
+        print(f"⏱️  Parallel matching took {elapsed:.2f}s")
         print("📊 Top 10 Candidates (Aligned Matches):")
-        for c in top_candidates:
+        for c in top_candidates[:10]:
             print(f"   - {c['episode_id']}: {c['aligned_matches']} aligned ({c['raw_matches']} raw)")
-        
+
         # Confidence calculation
-        total_queried = len(queried_indices)
-        min_aligned = max(10, total_queried * 0.01)
+        min_aligned = max(10, sample_size * 0.01)
         if best_episode and best_count >= min_aligned:
-            confidence = min(99, int((best_count / total_queried) * 1000))
+            confidence = min(99, int((best_count / sample_size) * 1000))
             return {
                 "episode_id": best_episode,
                 "timestamp": max(0, best_offset),
                 "confidence": confidence,
                 "aligned_matches": best_count,
                 "total_matches": len(all_matches[best_episode]),
-                "method": "audio_pkl_optimized_v4",
+                "method": "audio_pkl_parallel_v5",
                 "processing_time": elapsed
             }
         return {}
@@ -332,15 +302,20 @@ class AudioFingerprinter:
             return {}
 
     def get_stats(self) -> Dict[str, Any]:
-        total_entries = sum(len(a) for a in self.fingerprints.values())
+        total_episodes = sum(len(eps) for eps in self.season_episodes.values())
+        total_hashes = sum(len(fps) for fps in self.season_fingerprints.values())
+        total_entries = sum(
+            sum(len(a) for a in fps.values())
+            for fps in self.season_fingerprints.values()
+        )
         return {
-            "unique_hashes": len(self.fingerprints),
+            "unique_hashes": total_hashes,
             "total_entries": total_entries,
-            "episodes": len(self.episode_list),
-            "avg_hashes_per_episode": total_entries / max(1, len(self.episode_list)),
-            "loaded_databases": len(self.loaded_seasons),
+            "episodes": total_episodes,
+            "seasons_loaded": len(self.loaded_seasons),
             "existing_databases": len(self.existing_dbs),
-            "lazy_load_mode": self.lazy_load
+            "lazy_load_mode": self.lazy_load,
+            "parallel_workers": self.num_workers
         }
     
     def _get_season_from_episode_id(self, episode_id: str) -> Optional[int]:
@@ -402,47 +377,52 @@ class AudioFingerprinter:
         # Load the season database if not already loaded (for merging)
         if season not in self.loaded_seasons:
             self._load_database(season)
-        
-        # Add episode to episode list if not present
-        if episode_id not in self.episode_to_idx:
-            self.episode_to_idx[episode_id] = len(self.episode_list)
-            self.episode_list.append(episode_id)
-        
-        ep_idx = self.episode_to_idx[episode_id]
+
+        # Initialize season storage if needed
+        if season not in self.season_fingerprints:
+            self.season_fingerprints[season] = {}
+            self.season_episodes[season] = []
+            self.season_episode_to_idx[season] = {}
+
+        # Add episode to season's episode list if not present
+        if episode_id not in self.season_episode_to_idx[season]:
+            self.season_episode_to_idx[season][episode_id] = len(self.season_episodes[season])
+            self.season_episodes[season].append(episode_id)
+
+        ep_idx = self.season_episode_to_idx[season][episode_id]
         dtype = [('ep_idx', 'u2'), ('offset', 'f4')]
-        
-        # Group fingerprints by hash and add to in-memory database
+
+        # Group fingerprints by hash and add to season's in-memory database
         for h, offset in fingerprints:
             new_entry = np.array([(ep_idx, offset)], dtype=dtype)
-            
-            if h in self.fingerprints:
-                self.fingerprints[h] = np.concatenate([self.fingerprints[h], new_entry])
+
+            if h in self.season_fingerprints[season]:
+                self.season_fingerprints[season][h] = np.concatenate([self.season_fingerprints[season][h], new_entry])
             else:
-                self.fingerprints[h] = new_entry
-        
+                self.season_fingerprints[season][h] = new_entry
+
         print(f"✓ Added {episode_id}: {len(fingerprints)} fingerprints")
         return True
     
     def force_save_all(self):
         """Save all in-memory fingerprints to pickle files, organized by season."""
         print("💾 Saving all databases to pickle files...")
-        
-        # Group fingerprints by season
-        season_fingerprints: Dict[int, Dict[str, List[Tuple[str, float]]]] = defaultdict(lambda: defaultdict(list))
-        
-        # Convert in-memory format back to per-season format
-        for h, arr in self.fingerprints.items():
-            for entry in arr:
-                ep_idx = entry['ep_idx']
-                offset = entry['offset']
-                ep_id = self.episode_list[ep_idx]
-                season = self._get_season_from_episode_id(ep_id)
-                if season:
-                    season_fingerprints[season][h].append((ep_id, offset))
-        
+
         # Save each season database
         saved_count = 0
-        for season, fingerprints in season_fingerprints.items():
+        for season in self.season_fingerprints.keys():
+            # Convert numpy arrays back to list format for pickling
+            fingerprints_to_save = defaultdict(list)
+            episode_list = self.season_episodes[season]
+
+            for h, arr in self.season_fingerprints[season].items():
+                for entry in arr:
+                    ep_idx = entry['ep_idx']
+                    offset = entry['offset']
+                    ep_id = episode_list[ep_idx]
+                    fingerprints_to_save[h].append((ep_id, offset))
+
+            fingerprints = fingerprints_to_save
             db_file = self.DB_CONFIG.get(season)
             if not db_file:
                 continue
@@ -498,9 +478,9 @@ class AudioFingerprinter:
     
     def clear_db(self):
         """Clear all in-memory fingerprints (for testing)."""
-        self.fingerprints.clear()
-        self.episode_list.clear()
-        self.episode_to_idx.clear()
+        self.season_fingerprints.clear()
+        self.season_episodes.clear()
+        self.season_episode_to_idx.clear()
         self.loaded_seasons.clear()
         print("🗑️  Cleared all fingerprints from memory")
 

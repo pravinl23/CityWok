@@ -422,7 +422,7 @@ async def _match_with_progress(audio_matcher, audio_array, sr, progress_queue):
     if not query_prints:
         return {}
     
-    await _send_progress(progress_queue, "searching", f"Searching {len(query_prints)} fingerprints in database...")
+    await _send_progress(progress_queue, "searching", "Searching for match in database...")
     
     # Run matching in thread pool (it's CPU-bound and may take time)
     with ThreadPoolExecutor() as executor:
