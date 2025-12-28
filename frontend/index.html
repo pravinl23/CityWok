@@ -3,11 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>frontend</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="stage">
+      <div id="root"></div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // Fixed canvas scaling - desktop only
+      const W = 1920, H = 1080;
+      const stage = document.getElementById("stage");
+
+      function fit() {
+        // Only apply scaling on desktop (>768px)
+        if (window.innerWidth > 768) {
+          const s = Math.max(window.innerWidth / W, window.innerHeight / H);
+          stage.style.transform = `translate(-50%, -50%) scale(${s})`;
+        } else {
+          // On mobile, remove transform and let CSS handle responsive layout
+          stage.style.transform = 'none';
+        }
+      }
+
+      window.addEventListener("resize", fit);
+      window.addEventListener("load", fit);
+      fit();
+    </script>
   </body>
 </html>

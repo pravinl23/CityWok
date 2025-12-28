@@ -1,8 +1,9 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import './App.css'
 import cartmanImage from './assets/cartman.png'
 import backgroundImage from './assets/background.jpg'
+import backgroundMobile from './assets/background-mobile.jpg'
 
 // Get API URL from environment variable or use localhost for development
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -15,7 +16,17 @@ function App() {
   const [error, setError] = useState(null)
   const [url, setUrl] = useState('')
   const [isDragging, setIsDragging] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   const fileInputRef = useRef(null)
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   const validateFile = (selectedFile) => {
     // Check file size (100MB limit)
@@ -256,15 +267,15 @@ function App() {
 
   return (
     <div className="app-container">
-      <div className="background" style={{ backgroundImage: `url(${backgroundImage})` }}>
+      <div className="background" style={{ backgroundImage: `url(${isMobile ? backgroundMobile : backgroundImage})` }}>
+      </div>
+
+      <div className="banner-container">
+        <div className="banner banner-single">FIND THE EPISODE, M'KAY?</div>
       </div>
 
       <div className="content">
         <div className="left-side">
-          <div className="banners">
-            <div className="banner banner-top">FIND THE</div>
-            <div className="banner banner-bottom">EPISODE, M'KAY?</div>
-          </div>
           <div className="cartman">
             <img src={cartmanImage} alt="Cartman" className="cartman-image" />
           </div>
@@ -273,15 +284,30 @@ function App() {
         <div className="right-side">
           <div className={`upload-card ${isDragging ? 'dragging' : ''}`}>
             <div 
-              className="drop-zone"
+              className="input-section"
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                const droppedFile = e.dataTransfer.files[0];
+                if (droppedFile) {
+                  setUrl(''); // Clear URL if file is dropped
+                  handleFileChange(droppedFile);
+                }
+              }}
             >
-              <div className="upload-icon">↑</div>
-              <p className="upload-text">Drag & Drop Media</p>
-              <p className="upload-formats">(MP4, MOV, AVI, MKV, MP3, WAV, M4A)</p>
+              <input
+                type="text"
+                placeholder="Paste URL or Drag File..."
+                value={file ? file.name : url}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setFile(null); // Clear file when typing URL
+                }}
+                className="combined-input"
+                readOnly={!!file}
+              />
               <input
                 ref={fileInputRef}
                 type="file"
@@ -289,44 +315,32 @@ function App() {
                 onChange={handleFileInputChange}
                 style={{ display: 'none' }}
               />
-              {file && (
-                <p className="file-name">{file.name}</p>
-              )}
+              <button 
+                className="find-episode-btn"
+                onClick={() => {
+                  if (file) {
+                    handleIdentify();
+                  } else if (url.trim()) {
+                    handleUrlSubmit();
+                  }
+                }}
+                disabled={(!file && !url.trim()) || loading}
+              >
+                {loading ? 'PROCESSING...' : 'FIND EPISODE'}
+              </button>
             </div>
-
+            
+            {loading && statusMessage && (
+              <p className="status-message">{statusMessage}</p>
+            )}
 
             <button 
               className="upload-btn"
-              onClick={handleIdentify}
-              disabled={!file || loading}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
             >
-              {loading ? 'PROCESSING...' : 'UPLOAD FILE'}
+              UPLOAD FILE
             </button>
-            {loading && statusMessage && (
-              <p className="status-message">{statusMessage}</p>
-            )}
-
-            <p className="or-text">OR PASTE URL</p>
-            
-            <div className="url-section">
-              <input
-                type="text"
-                placeholder="https://tiktok.com/..."
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                className="url-input"
-              />
-              <button 
-                className="find-btn"
-                onClick={handleUrlSubmit}
-                disabled={!url.trim() || loading}
-              >
-                {loading ? 'PROCESSING...' : 'FIND IT'}
-              </button>
-            </div>
-            {loading && statusMessage && (
-              <p className="status-message">{statusMessage}</p>
-            )}
 
             {error && <div className="error-message">{error}</div>}
 
