@@ -133,7 +133,25 @@ def download_video_from_url(url: str) -> str:
             os.remove(tmp_path)
         error_msg = str(e)
         print(f"   ❌ Download error: {error_msg}")
-        raise HTTPException(status_code=400, detail=f"Download failed: {error_msg}")
+
+        # Provide user-friendly error messages for common issues
+        if "not be comfortable for some audiences" in error_msg or "Log in for access" in error_msg:
+            raise HTTPException(
+                status_code=400,
+                detail="This TikTok video is age-restricted or requires login. Please try a different video."
+            )
+        elif "Private video" in error_msg or "This video is private" in error_msg:
+            raise HTTPException(
+                status_code=400,
+                detail="This video is private and cannot be accessed. Please try a different video."
+            )
+        elif "Video not available" in error_msg or "removed" in error_msg:
+            raise HTTPException(
+                status_code=400,
+                detail="This video is no longer available. It may have been deleted."
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Download failed: {error_msg}")
 
 
 def format_time(seconds: float) -> str:
