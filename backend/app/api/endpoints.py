@@ -81,22 +81,18 @@ def download_video_from_url(url: str) -> str:
         'outtmpl': tmp_path,
         'quiet': False,  # Show progress
         'no_warnings': False,
-        # Force audio extraction - extract audio from video if no audio-only stream available
+        # Download smallest format available (audio or worst quality video)
         'format': 'bestaudio/worst',  # Audio-only for 10-20x faster downloads, or worst quality video
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',  # Extract audio from video files
-            'preferredcodec': 'm4a',
-            'preferredquality': '5',  # Lowest quality = smallest file
-        }] if 'tiktok.com' in url else [],  # Only extract for TikTok (no separate audio stream)
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': url,
         },
         'progress_hooks': [progress_hook],
-        'socket_timeout': 15,  # Reduced from 30 (smaller audio files)
+        'socket_timeout': 15,  # Reduced from 30 (smaller files)
         'noplaylist': True,
         'concurrent_fragment_downloads': 4,  # Download 4 fragments in parallel
         'prefer_free_formats': True,  # Prefer webm/opus (smaller than m4a)
+        'postprocessors': [],  # No post-processing - let our code handle audio extraction
     }
     
     try:
