@@ -211,32 +211,53 @@ class AudioFingerprinter:
         if not query_prints: return {}
 
         total_query_hashes = len(query_prints)
-        print(f"🔍 Searching {total_query_hashes} query hashes across {len(self.loaded_seasons)} seasons in parallel...")
+        print(f"🔍 Searching across {len(self.loaded_seasons)} seasons in parallel...")
 
-        # Sample query hashes (use first 5000 for speed)
-        sample_size = min(5000, total_query_hashes)
-        step = max(1, total_query_hashes // sample_size)
-        sampled_query = query_prints[::step][:sample_size]
-
-        # Search all seasons in parallel
+        # Two-pass strategy with parallel season search
+        # Pass 1: Quick search with 1000 hashes
+        # Pass 2: If no strong match, search with 3000 more hashes
+        passes = [1000, 3000]
         all_matches = defaultdict(list)
+        queried_indices = set()
 
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            # Submit one task per season
-            future_to_season = {
-                executor.submit(self._match_season, season, sampled_query): season
-                for season in self.loaded_seasons
-            }
+        for pass_idx, num_to_query in enumerate(passes):
+            # Sample indices we haven't queried yet
+            remaining_indices = [i for i in range(total_query_hashes) if i not in queried_indices]
+            if not remaining_indices: break
 
-            # Collect results as they complete
-            for future in as_completed(future_to_season):
-                season = future_to_season[future]
-                try:
-                    season_matches = future.result()
-                    for ep_id, offsets in season_matches.items():
-                        all_matches[ep_id].extend(offsets)
-                except Exception as e:
-                    print(f"   ⚠️  Error matching season {season}: {e}")
+            sample_size = min(num_to_query, len(remaining_indices))
+            step = max(1, len(remaining_indices) // sample_size)
+            current_indices = remaining_indices[::step][:sample_size]
+            queried_indices.update(current_indices)
+
+            current_query = [query_prints[i] for i in current_indices]
+
+            # Search all seasons in parallel
+            pass_matches = defaultdict(list)
+
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                future_to_season = {
+                    executor.submit(self._match_season, season, current_query): season
+                    for season in self.loaded_seasons
+                }
+
+                for future in as_completed(future_to_season):
+                    try:
+                        season_matches = future.result()
+                        for ep_id, offsets in season_matches.items():
+                            all_matches[ep_id].extend(offsets)
+                            pass_matches[ep_id].extend(offsets)
+                    except Exception as e:
+                        pass  # Silent fail for individual seasons
+
+            # Check for strong match and early exit
+            if pass_matches:
+                best_ep, best_off, best_cnt, _ = self._find_best_alignment(pass_matches)
+                if pass_idx == 0 and best_cnt >= 30:
+                    print(f"🚀 Strong match in Pass 1 ({best_cnt} aligned). Stopping early.")
+                    break
+                if pass_idx == 1 and best_cnt >= 25:
+                    break
 
         if not all_matches:
             print("   ❌ No matches found")
@@ -252,9 +273,10 @@ class AudioFingerprinter:
             print(f"   - {c['episode_id']}: {c['aligned_matches']} aligned ({c['raw_matches']} raw)")
 
         # Confidence calculation
-        min_aligned = max(10, sample_size * 0.01)
+        total_queried = len(queried_indices)
+        min_aligned = max(10, total_queried * 0.01)
         if best_episode and best_count >= min_aligned:
-            confidence = min(99, int((best_count / sample_size) * 1000))
+            confidence = min(99, int((best_count / total_queried) * 1000))
             return {
                 "episode_id": best_episode,
                 "timestamp": max(0, best_offset),
