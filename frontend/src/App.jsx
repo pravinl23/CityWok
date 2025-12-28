@@ -300,8 +300,11 @@ function App() {
               onClick={handleIdentify}
               disabled={!file || loading}
             >
-              {loading ? (statusMessage || 'PROCESSING...') : 'UPLOAD FILE'}
+              {loading ? 'PROCESSING...' : 'UPLOAD FILE'}
             </button>
+            {loading && statusMessage && (
+              <p className="status-message">{statusMessage}</p>
+            )}
 
             <p className="or-text">OR PASTE URL</p>
             
@@ -318,9 +321,12 @@ function App() {
                 onClick={handleUrlSubmit}
                 disabled={!url.trim() || loading}
               >
-                {loading ? (statusMessage || 'PROCESSING...') : 'FIND IT'}
+                {loading ? 'PROCESSING...' : 'FIND IT'}
               </button>
             </div>
+            {loading && statusMessage && (
+              <p className="status-message">{statusMessage}</p>
+            )}
 
             {error && <div className="error-message">{error}</div>}
 

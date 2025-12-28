@@ -84,14 +84,15 @@ else
     pickle_count=$(ls -1 ${DATA_DIR}/audio_fingerprints_s*.pkl 2>/dev/null | wc -l | tr -d ' ')
     
     if [ -n "$DOWNLOAD_PICKLE_DB" ] && [ "$DOWNLOAD_PICKLE_DB" = "true" ]; then
-        if [ "$pickle_count" -lt 20 ] && [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
-            echo "📦 Downloading missing pickle databases from R2/S3..."
-            echo "   Found $pickle_count existing files, downloading missing ones..."
-            
-            mkdir -p "$DATA_DIR"
-            
-            # Download pickle files from R2/S3
-            python3 -c "
+        if [ "$pickle_count" -lt 20 ]; then
+            if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
+                echo "📦 Downloading missing pickle databases from R2/S3..."
+                echo "   Found $pickle_count existing files, downloading missing ones..."
+                
+                mkdir -p "$DATA_DIR"
+                
+                # Download pickle files from R2/S3
+                python3 -c "
 import os
 import boto3
 from pathlib import Path
@@ -136,8 +137,12 @@ try:
 except Exception as e:
     print(f'  ⚠️  Could not download from R2: {e}')
 " || echo "   ⚠️  Pickle download failed, continuing without databases"
+            else
+                echo "   ⚠️  R2 credentials not configured for pickle download"
+                echo "   (Found $pickle_count/20 files - missing files will not be downloaded)"
+            fi
         else
-            echo "   ⚠️  R2 credentials not configured for pickle download"
+            echo "   ✓ All pickle databases already present ($pickle_count files)"
         fi
     fi
     
