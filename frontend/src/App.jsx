@@ -52,6 +52,17 @@ function App() {
     return true;
   }
 
+  const validateUrl = (urlString) => {
+    // Check if URL is from supported platforms: TikTok, Instagram, or YouTube
+    const supportedPlatforms = [
+      /^https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com)/i,  // TikTok
+      /^https?:\/\/(www\.)?(instagram\.com|instagr\.am)/i,   // Instagram
+      /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)/i,       // YouTube
+    ];
+
+    return supportedPlatforms.some(pattern => pattern.test(urlString));
+  }
+
   const handleFileChange = (selectedFile) => {
     if (selectedFile) {
       setError(null);
@@ -188,7 +199,13 @@ function App() {
       setError("Please enter a URL")
       return
     }
-    
+
+    // Validate URL is from supported platform
+    if (!validateUrl(url.trim())) {
+      setError("Please enter a valid TikTok, Instagram, or YouTube URL")
+      return
+    }
+
     setLoading(true)
     setError(null)
     setResult(null)
@@ -299,7 +316,7 @@ function App() {
             >
               <input
                 type="text"
-                placeholder="Paste URL or Drag File..."
+                placeholder="Paste TikTok, Instagram, or YouTube URL..."
                 value={file ? file.name : url}
                 onChange={(e) => {
                   setUrl(e.target.value);

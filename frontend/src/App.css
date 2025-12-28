@@ -512,6 +512,8 @@ html, body {
     min-height: 100vh;
     overflow-y: auto;
     overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   /* Background - full mobile viewport */
@@ -522,10 +524,14 @@ html, body {
     background-size: cover;
   }
 
-  /* Banner - smaller and at top */
+  /* Banner - smaller, dynamic positioning */
   .banner-container {
-    top: 80px;
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
     padding: 0 15px;
+    margin-bottom: 20px;
   }
 
   .banner-single {
@@ -537,10 +543,11 @@ html, body {
   /* Content - single column, centered */
   .content {
     flex-direction: column;
-    padding: 120px 20px 40px;
-    justify-content: flex-start;
+    padding: 30px 20px 40px;
+    justify-content: center;
     align-items: center;
-    min-height: 100vh;
+    flex: 1;
+    min-height: auto;
   }
 
   /* LEFT SIDE - HIDE CARTMAN */
@@ -653,6 +660,6 @@ html, body {
   }
 
   .content {
-    padding: 0px 15px 30px;
+    padding: 20px 15px 30px;
   }
 }
