@@ -56,6 +56,29 @@ def cleanup_file(path: str):
             print(f"Warning: Could not delete temp file {path}: {e}")
 
 
+def get_platform_from_url(url: str) -> str:
+    """Detect platform from URL."""
+    url_lower = url.lower()
+    if 'tiktok.com' in url_lower or 'vm.tiktok.com' in url_lower:
+        return 'tiktok'
+    elif 'instagram.com' in url_lower or 'instagr.am' in url_lower:
+        return 'instagram'
+    elif 'youtube.com' in url_lower or 'youtu.be' in url_lower:
+        return 'youtube'
+    return 'unknown'
+
+
+def validate_supported_url(url: str) -> bool:
+    """Validate URL is from supported platform."""
+    import re
+    patterns = [
+        r'https?://(www\.)?(tiktok\.com|vm\.tiktok\.com)',
+        r'https?://(www\.)?(instagram\.com|instagr\.am)',
+        r'https?://(www\.)?(youtube\.com|youtu\.be)',
+    ]
+    return any(re.match(pattern, url, re.IGNORECASE) for pattern in patterns)
+
+
 def download_video_from_url(url: str) -> str:
     """Download video/audio from URL using yt-dlp."""
     if not URL_DOWNLOAD_AVAILABLE:
@@ -134,13 +157,41 @@ def download_video_from_url(url: str) -> str:
         error_msg = str(e)
         print(f"   ❌ Download error: {error_msg}")
 
-        # Provide user-friendly error messages for common issues
-        if "not be comfortable for some audiences" in error_msg or "Log in for access" in error_msg:
-            raise HTTPException(
-                status_code=400,
-                detail="This TikTok video is age-restricted or requires login. Please try a different video."
-            )
-        elif "Private video" in error_msg or "This video is private" in error_msg:
+        # Detect platform for platform-specific error messages
+        platform = get_platform_from_url(url)
+
+        # Provide platform-specific error messages
+        if platform == 'instagram':
+            if "Login required" in error_msg or "Private account" in error_msg or "login" in error_msg.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="This Instagram content is private or requires login. Please use a public post or reel."
+                )
+            elif "not available" in error_msg.lower() or "removed" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This Instagram content is no longer available. It may have been deleted."
+                )
+        elif platform == 'youtube':
+            if "age" in error_msg.lower() or "restricted" in error_msg.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="This YouTube video is age-restricted. Please try a different video."
+                )
+            elif "private" in error_msg.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="This YouTube video is private and cannot be accessed."
+                )
+        elif platform == 'tiktok':
+            if "not be comfortable for some audiences" in error_msg or "Log in for access" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This TikTok video is age-restricted or requires login. Please try a different video."
+                )
+
+        # Generic error messages for common issues
+        if "Private video" in error_msg or "This video is private" in error_msg:
             raise HTTPException(
                 status_code=400,
                 detail="This video is private and cannot be accessed. Please try a different video."
@@ -425,7 +476,7 @@ async def _match_with_progress(audio_matcher, audio_array, sr, progress_queue):
     from concurrent.futures import ThreadPoolExecutor
     
     # Generate fingerprints (this is fast, can be async)
-    await _send_progress(progress_queue, "fingerprinting", "Analyzing audio features...")
+    await _send_progress(progress_queue, "fingerprinting", "Analyzing video...")
     
     # Run fingerprinting in thread pool (it's CPU-bound)
     loop = asyncio.get_event_loop()
@@ -440,7 +491,7 @@ async def _match_with_progress(audio_matcher, audio_array, sr, progress_queue):
     if not query_prints:
         return {}
     
-    await _send_progress(progress_queue, "searching", "Searching for match in database...")
+    await _send_progress(progress_queue, "searching", "Searching for match...")
     
     # Run matching in thread pool (it's CPU-bound and may take time)
     with ThreadPoolExecutor() as executor:
@@ -475,10 +526,17 @@ async def identify_episode(
     
     if not AUDIO_AVAILABLE or not audio_matcher:
         raise HTTPException(status_code=503, detail="Audio service not available")
-    
+
     if not file and not url:
         raise HTTPException(status_code=400, detail="Provide either a file or URL")
-    
+
+    # Validate URL is from supported platform
+    if url and not validate_supported_url(url):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported URL. Please use TikTok, Instagram, or YouTube links."
+        )
+
     # Parse stream parameter (Form fields come as strings)
     stream_enabled = stream and stream.lower() in ('true', '1', 'yes')
     
