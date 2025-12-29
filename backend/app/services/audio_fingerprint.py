@@ -53,11 +53,25 @@ class AudioFingerprinter:
         
         # OPTIMIZATION A: Incremental fingerprinting config
         self.incremental_durations = [3.0, 5.0, 8.0, 10.0]  # seconds
-        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '20'))
+        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '35'))
+        
+        # Multi-window sampling config
+        self.use_multi_window = True
+        self.num_windows = 4  # Sample 4 windows across the clip
+        self.min_window_agreement = 2  # Require same episode to win in ≥2 windows
+        
+        # Margin/confidence requirements for early exit
+        self.min_confidence_ratio = 1.35  # top1/top2 aligned ratio
+        self.min_confidence_margin = 15   # top1 - top2 aligned difference
+        self.min_peak_sharpness = 1.3     # peak/second_peak ratio in offset histogram
         
         # OPTIMIZATION B: Common hash filtering
         self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
         self.common_hash_stoplist: set = set()
+        
+        # IDF weighting (for down-weighting common hashes)
+        self.use_idf_weighting = True
+        self.hash_df_cache = {}  # Cache document frequencies
         
         # Check for lazy loading flag (default: False for backward compatibility)
         if lazy_load is None:
@@ -157,6 +171,10 @@ class AudioFingerprinter:
             ) / 1024 / 1024
             print(f"✅ Loaded {len(self.loaded_seasons)} seasons ({total_eps} episodes) in {elapsed:.1f}s")
             print(f"📊 Total Data Size: {total_size:.1f}MB | {self.num_workers} parallel workers")
+            
+            # Build IDF cache if enabled
+            if self.use_idf_weighting:
+                self._build_hash_df_cache()
 
     def _load_stoplist(self, stoplist_path: str):
         """Load precomputed common hash stoplist from disk."""
@@ -301,17 +319,216 @@ class AudioFingerprinter:
         else:
             return self._match_full(audio_array, sr, start_time)
     
+    def _get_audio_windows(self, audio_array: np.ndarray, sr: int, num_windows: int = 4, window_duration: float = 2.5) -> List[Tuple[np.ndarray, float]]:
+        """
+        Extract multiple windows from audio for robust matching.
+        
+        Returns list of (audio_chunk, start_offset_seconds) tuples.
+        """
+        duration = len(audio_array) / sr
+        window_samples = int(window_duration * sr)
+        
+        if duration < window_duration:
+            # Audio too short - return full clip
+            return [(audio_array, 0.0)]
+        
+        # Sample windows at evenly spaced positions
+        windows = []
+        positions = [0.10, 0.35, 0.60, 0.85][:num_windows]  # 10%, 35%, 60%, 85%
+        
+        for pos in positions:
+            start_sample = int((duration - window_duration) * pos * sr)
+            end_sample = start_sample + window_samples
+            
+            if end_sample <= len(audio_array):
+                chunk = audio_array[start_sample:end_sample]
+                start_offset = start_sample / sr
+                windows.append((chunk, start_offset))
+        
+        return windows if windows else [(audio_array, 0.0)]
+    
     def _match_incremental(self, audio_array: np.ndarray, sr: int, start_time: float) -> Dict[str, Any]:
         """
-        OPTIMIZATION A: Incremental fingerprinting.
+        OPTIMIZED INCREMENTAL MATCHING with multi-window sampling and robust early exit.
         
-        Start with 3 seconds, then extend to 5s, 8s, 10s.
-        Stop as soon as we find a confident match.
+        Improvements:
+        - Multi-window fingerprinting (sample 4 windows across clip)
+        - Margin-based early exit (top1/top2 ratio + sharpness)
+        - IDF weighting for common hash down-weighting
+        - Confidence messaging for uncertain matches
         """
-        print("🔍 Using INCREMENTAL matching (Optimization A+B+C)")
+        print("🔍 Using OPTIMIZED INCREMENTAL matching (A+B+C+Multi-Window)")
         
         duration = len(audio_array) / sr
         print(f"   Audio duration: {duration:.1f}s")
+        
+        # Use multi-window sampling instead of just first N seconds
+        if self.use_multi_window and duration >= 5.0:
+            return self._match_multi_window(audio_array, sr, start_time, duration)
+        
+        # Fallback to incremental (for short clips < 5s)
+        return self._match_incremental_single(audio_array, sr, start_time, duration)
+    
+    def _match_multi_window(self, audio_array: np.ndarray, sr: int, start_time: float, duration: float) -> Dict[str, Any]:
+        """Multi-window matching for robust distorted clip handling."""
+        print(f"   Using multi-window sampling ({self.num_windows} windows)")
+        
+        # Extract windows
+        windows = self._get_audio_windows(audio_array, sr, self.num_windows)
+        print(f"   Extracted {len(windows)} windows")
+        
+        # Match each window independently
+        window_results = []
+        all_matches = defaultdict(list)
+        all_weights = defaultdict(list) if self.use_idf_weighting else None
+        
+        for idx, (window_audio, window_offset) in enumerate(windows):
+            print(f"\n   Window {idx+1}/{len(windows)} (offset: {window_offset:.1f}s):")
+            
+            # Fingerprint window
+            peaks = self._get_spectrogram_peaks(window_audio)
+            window_fingerprints = self._create_hashes(peaks)
+            
+            if not window_fingerprints:
+                print(f"      No fingerprints in window {idx+1}")
+                continue
+            
+            print(f"      Generated {len(window_fingerprints)} hashes")
+            
+            # Filter common hashes
+            filtered_hashes = [
+                (h, t) for h, t in window_fingerprints 
+                if h not in self.common_hash_stoplist
+            ]
+            
+            filtered_count = len(window_fingerprints) - len(filtered_hashes)
+            if filtered_count > 0:
+                print(f"      Filtered {filtered_count} common hashes")
+            
+            if not filtered_hashes:
+                continue
+            
+            # Search
+            print(f"      Searching {len(filtered_hashes)} hashes...")
+            window_matches = defaultdict(list)
+            window_weights = defaultdict(list) if self.use_idf_weighting else None
+            
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                future_to_season = {
+                    executor.submit(self._match_season, season, filtered_hashes): season
+                    for season in self.loaded_seasons
+                }
+
+                for future in as_completed(future_to_season):
+                    try:
+                        season_matches = future.result()
+                        for ep_id, offsets in season_matches.items():
+                            window_matches[ep_id].extend(offsets)
+                            all_matches[ep_id].extend(offsets)
+                            
+                            # Track IDF weights
+                            if self.use_idf_weighting and window_weights is not None:
+                                weights = [self._calculate_idf_weight(h) for h, _ in filtered_hashes]
+                                window_weights[ep_id].extend(weights[:len(offsets)])
+                                if all_weights is not None:
+                                    all_weights[ep_id].extend(weights[:len(offsets)])
+                    except Exception as e:
+                        pass
+            
+            # Find best in this window
+            if window_matches:
+                best_ep, best_off, best_cnt, candidates = self._find_best_alignment(
+                    window_matches, 
+                    use_weights=self.use_idf_weighting,
+                    weights_dict=window_weights
+                )
+                
+                sharpness = candidates[0]['sharpness'] if candidates else 0.0
+                print(f"      Best: {best_ep} ({best_cnt:.1f} aligned, sharpness: {sharpness:.2f})")
+                
+                window_results.append({
+                    'episode_id': best_ep,
+                    'aligned': best_cnt,
+                    'offset': best_off,
+                    'sharpness': sharpness
+                })
+        
+        if not window_results:
+            print("\n   ❌ No matches in any window")
+            return {}
+        
+        # Vote across windows - require same episode to win in multiple windows
+        episode_votes = Counter(r['episode_id'] for r in window_results)
+        print(f"\n   Window voting: {dict(episode_votes.most_common(3))}")
+        
+        # Check for consensus
+        winner, num_wins = episode_votes.most_common(1)[0]
+        
+        # Final alignment using all matches
+        best_episode, best_offset, best_count, candidates = self._find_best_alignment(
+            all_matches,
+            use_weights=self.use_idf_weighting,
+            weights_dict=all_weights
+        )
+        
+        elapsed = time.time() - start_time
+        
+        # Check quality criteria
+        if len(candidates) >= 2:
+            top1_aligned = candidates[0]['aligned_matches']
+            top2_aligned = candidates[1]['aligned_matches']
+            ratio = top1_aligned / (top2_aligned + 1)
+            margin = top1_aligned - top2_aligned
+            sharpness = candidates[0].get('sharpness', 0.0)
+            
+            print(f"\n   Quality check:")
+            print(f"      Top1: {candidates[0]['episode_id']} ({top1_aligned:.1f} aligned)")
+            print(f"      Top2: {candidates[1]['episode_id']} ({top2_aligned:.1f} aligned)")
+            print(f"      Ratio: {ratio:.2f} (need {self.min_confidence_ratio})")
+            print(f"      Margin: {margin:.1f} (need {self.min_confidence_margin})")
+            print(f"      Sharpness: {sharpness:.2f} (need {self.min_peak_sharpness})")
+            print(f"      Window wins: {num_wins}/{len(windows)} (need {self.min_window_agreement})")
+            
+            # Calculate confidence
+            confidence = min(99, int((top1_aligned / max(1, len(all_matches[best_episode]))) * 100))
+            
+            # Build result
+            result = {
+                "episode_id": best_episode,
+                "timestamp": max(0, best_offset),
+                "confidence": confidence,
+                "aligned_matches": int(top1_aligned),
+                "total_matches": len(all_matches[best_episode]),
+                "method": f"multi_window_{len(windows)}",
+                "processing_time": elapsed,
+                "window_agreement": f"{num_wins}/{len(windows)}",
+                "quality_ratio": round(ratio, 2),
+                "quality_sharpness": round(sharpness, 2)
+            }
+            
+            # Add uncertainty message if confidence < 50
+            if confidence < 50:
+                result["message"] = "⚠️ Low confidence - this is my best guess but I'm not sure"
+                print(f"\n   ⚠️  LOW CONFIDENCE ({confidence}%) - uncertain match")
+            
+            return result
+        
+        # Single candidate or no candidates
+        confidence = 30 if best_count > 10 else 10
+        return {
+            "episode_id": best_episode,
+            "timestamp": max(0, best_offset),
+            "confidence": confidence,
+            "aligned_matches": int(best_count),
+            "total_matches": len(all_matches[best_episode]),
+            "method": "multi_window_weak",
+            "processing_time": elapsed,
+            "message": "⚠️ Low confidence - this is my best guess but I'm not sure"
+        }
+    
+    def _match_incremental_single(self, audio_array: np.ndarray, sr: int, start_time: float, duration: float) -> Dict[str, Any]:
+        """Incremental matching for short clips (< 5s)."""
+        print(f"   Using single-window incremental (short clip)")
         
         # Incremental durations: 3s, 5s, 8s, 10s (or full duration)
         durations = [d for d in self.incremental_durations if d <= duration]
@@ -319,6 +536,7 @@ class AudioFingerprinter:
             durations.append(duration)
         
         all_matches = defaultdict(list)
+        all_weights = defaultdict(list) if self.use_idf_weighting else None
         total_fingerprints_generated = 0
         
         for step_idx, step_duration in enumerate(durations):
@@ -360,6 +578,7 @@ class AudioFingerprinter:
             lookup_start = time.time()
             
             step_matches = defaultdict(list)
+            step_weights = defaultdict(list) if self.use_idf_weighting else None
             
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
                 future_to_season = {
@@ -373,6 +592,13 @@ class AudioFingerprinter:
                         for ep_id, offsets in season_matches.items():
                             all_matches[ep_id].extend(offsets)
                             step_matches[ep_id].extend(offsets)
+                            
+                            if self.use_idf_weighting:
+                                weights = [self._calculate_idf_weight(h) for h, _ in filtered_hashes]
+                                if step_weights is not None:
+                                    step_weights[ep_id].extend(weights[:len(offsets)])
+                                if all_weights is not None:
+                                    all_weights[ep_id].extend(weights[:len(offsets)])
                     except Exception as e:
                         pass  # Silent fail for individual seasons
             
@@ -381,29 +607,54 @@ class AudioFingerprinter:
             
             # Check if we have a confident match
             if step_matches:
-                best_ep, best_off, best_cnt, _ = self._find_best_alignment(step_matches)
-                print(f"   🎯 Best match: {best_ep} ({best_cnt} aligned hashes)")
+                best_ep, best_off, best_cnt, candidates = self._find_best_alignment(
+                    step_matches,
+                    use_weights=self.use_idf_weighting,
+                    weights_dict=step_weights
+                )
                 
-                # OPTIMIZATION A: Early exit if confident
-                if best_cnt >= self.min_aligned_early_exit:
-                    elapsed = time.time() - start_time
-                    print(f"\n🚀 CONFIDENT MATCH found at step {step_idx+1}/{len(durations)}")
-                    print(f"   Only fingerprinted {step_duration:.1f}s (vs {duration:.1f}s full)")
-                    print(f"   Total time: {elapsed:.2f}s")
+                sharpness = candidates[0].get('sharpness', 0.0) if candidates else 0.0
+                print(f"   🎯 Best match: {best_ep} ({best_cnt:.1f} aligned, sharpness: {sharpness:.2f})")
+                
+                # Check margin and sharpness for early exit
+                if len(candidates) >= 2:
+                    top2_cnt = candidates[1]['aligned_matches']
+                    ratio = best_cnt / (top2_cnt + 1)
+                    margin = best_cnt - top2_cnt
                     
-                    confidence = min(99, int((best_cnt / len(chunk_fingerprints)) * 1000))
+                    print(f"      Margin check: ratio={ratio:.2f}, margin={margin:.1f}, sharpness={sharpness:.2f}")
                     
-                    return {
-                        "episode_id": best_ep,
-                        "timestamp": max(0, best_off),
-                        "confidence": confidence,
-                        "aligned_matches": best_cnt,
-                        "total_matches": len(all_matches[best_ep]),
-                        "method": f"incremental_pkl_step_{step_idx+1}",
-                        "processing_time": elapsed,
-                        "duration_used": step_duration,
-                        "duration_saved": duration - step_duration
-                    }
+                    # ROBUST EARLY EXIT: require ALL conditions
+                    if (best_cnt >= self.min_aligned_early_exit and 
+                        ratio >= self.min_confidence_ratio and
+                        margin >= self.min_confidence_margin and
+                        sharpness >= self.min_peak_sharpness):
+                        
+                        elapsed = time.time() - start_time
+                        print(f"\n🚀 CONFIDENT MATCH found at step {step_idx+1}/{len(durations)}")
+                        print(f"   Only fingerprinted {step_duration:.1f}s (vs {duration:.1f}s full)")
+                        print(f"   Total time: {elapsed:.2f}s")
+                        
+                        confidence = min(99, int((best_cnt / total_fingerprints_generated) * 100))
+                        
+                        result = {
+                            "episode_id": best_ep,
+                            "timestamp": max(0, best_off),
+                            "confidence": confidence,
+                            "aligned_matches": int(best_cnt),
+                            "total_matches": len(all_matches[best_ep]),
+                            "method": f"incremental_pkl_step_{step_idx+1}",
+                            "processing_time": elapsed,
+                            "duration_used": step_duration,
+                            "duration_saved": duration - step_duration,
+                            "quality_ratio": round(ratio, 2),
+                            "quality_sharpness": round(sharpness, 2)
+                        }
+                        
+                        if confidence < 50:
+                            result["message"] = "⚠️ Low confidence - this is my best guess but I'm not sure"
+                        
+                        return result
             
             step_time = time.time() - step_start
             print(f"   Step {step_idx+1} total: {step_time:.2f}s")
@@ -412,26 +663,37 @@ class AudioFingerprinter:
         print(f"\n⚠️  No confident match after all incremental steps")
         
         if all_matches:
-            best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(all_matches)
+            best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(
+                all_matches,
+                use_weights=self.use_idf_weighting,
+                weights_dict=all_weights
+            )
             elapsed = time.time() - start_time
             
             print(f"⏱️  Total matching took {elapsed:.2f}s")
             print("📊 Top 10 Candidates:")
             for c in top_candidates[:10]:
-                print(f"   - {c['episode_id']}: {c['aligned_matches']} aligned")
+                sharpness = c.get('sharpness', 0.0)
+                print(f"   - {c['episode_id']}: {c['aligned_matches']:.1f} aligned (sharpness: {sharpness:.2f})")
             
             # Return best match even if below threshold
             if best_count >= 5:
-                confidence = int((best_count / total_fingerprints_generated) * 100) if total_fingerprints_generated > 0 else 0
-                return {
+                confidence = min(99, int((best_count / total_fingerprints_generated) * 100)) if total_fingerprints_generated > 0 else 10
+                
+                result = {
                     "episode_id": best_episode,
                     "timestamp": max(0, best_offset),
                     "confidence": confidence,
-                    "aligned_matches": best_count,
+                    "aligned_matches": int(best_count),
                     "total_matches": len(all_matches[best_episode]),
                     "method": "incremental_pkl_weak",
                     "processing_time": elapsed
                 }
+                
+                # Always add warning for weak matches
+                result["message"] = "⚠️ Low confidence - this is my best guess but I'm not sure"
+                
+                return result
         
         return {}
     
@@ -540,28 +802,108 @@ class AudioFingerprinter:
             }
         return {}
 
-    def _find_best_alignment(self, matches_dict: Dict[str, List[float]]) -> Tuple[str, float, int, List[Dict]]:
-        """Find best alignment using binned voting. Returns best match and top 10 candidates."""
+    def _calculate_peak_sharpness(self, offsets: List[float]) -> float:
+        """
+        Calculate sharpness of the offset peak.
+        
+        Sharp peak (good match) = most offsets in one bin
+        Flat distribution (bad match) = offsets spread across many bins
+        
+        Returns: peak_count / second_peak_count ratio
+        """
+        if not offsets:
+            return 0.0
+        
+        binned = [round(o * 2) / 2 for o in offsets]
+        counts = Counter(binned)
+        
+        if len(counts) < 2:
+            return float('inf')  # Only one peak - perfect!
+        
+        top_two = counts.most_common(2)
+        peak = top_two[0][1]
+        second = top_two[1][1]
+        
+        return peak / (second + 1)  # +1 to avoid division by zero
+    
+    def _calculate_idf_weight(self, hash_str: str) -> float:
+        """Calculate IDF weight for a hash based on document frequency."""
+        if not self.use_idf_weighting:
+            return 1.0
+        
+        # Get document frequency (number of episodes this hash appears in)
+        df = self.hash_df_cache.get(hash_str, 1)
+        
+        # IDF: inverse document frequency
+        # Common hashes (high df) get low weight
+        import math
+        return 1.0 / math.log(1 + df)
+    
+    def _build_hash_df_cache(self):
+        """Build document frequency cache for IDF weighting."""
+        if not self.use_idf_weighting:
+            return
+        
+        print("   Building hash document frequency cache...")
+        self.hash_df_cache = {}
+        
+        for season, fingerprints in self.season_fingerprints.items():
+            for h, arr in fingerprints.items():
+                # Count unique episodes this hash appears in
+                unique_episodes = len(set(self.season_episodes[season][x['ep_idx']] for x in arr))
+                self.hash_df_cache[h] = self.hash_df_cache.get(h, 0) + unique_episodes
+        
+        print(f"   ✓ Cached {len(self.hash_df_cache):,} hash document frequencies")
+    
+    def _find_best_alignment(self, matches_dict: Dict[str, List[float]], use_weights: bool = False, weights_dict: Dict[str, List[float]] = None) -> Tuple[str, float, int, List[Dict]]:
+        """
+        Find best alignment using binned voting with optional IDF weighting.
+        
+        Returns best match and top 10 candidates with sharpness scores.
+        """
         best_ep, best_count, best_offset = None, 0, 0.0
         candidates = []
         
         # Increase candidate pool to 200 to avoid missing signal buried in noise
         sorted_candidates = sorted(matches_dict.items(), key=lambda x: len(x[1]), reverse=True)[:200]
         for ep_id, offsets in sorted_candidates:
-            binned = [round(o * 2) / 2 for o in offsets]
-            counts = Counter(binned)
-            if not counts: continue
-            mode_offset, count = counts.most_common(1)[0]
+            if not offsets:
+                continue
+            
+            # Calculate aligned score (with optional IDF weighting)
+            if use_weights and weights_dict and ep_id in weights_dict:
+                # Weighted alignment
+                offset_weights = defaultdict(float)
+                for offset, weight in zip(offsets, weights_dict[ep_id]):
+                    binned_offset = round(offset * 2) / 2
+                    offset_weights[binned_offset] += weight
+                
+                if not offset_weights:
+                    continue
+                    
+                mode_offset = max(offset_weights.items(), key=lambda x: x[1])[0]
+                aligned_score = offset_weights[mode_offset]
+            else:
+                # Standard binned voting
+                binned = [round(o * 2) / 2 for o in offsets]
+                counts = Counter(binned)
+                if not counts:
+                    continue
+                mode_offset, aligned_score = counts.most_common(1)[0]
+            
+            # Calculate peak sharpness
+            sharpness = self._calculate_peak_sharpness(offsets)
             
             candidates.append({
                 "episode_id": ep_id,
-                "aligned_matches": count,
+                "aligned_matches": aligned_score,
                 "raw_matches": len(offsets),
-                "offset": mode_offset
+                "offset": mode_offset,
+                "sharpness": sharpness
             })
             
-            if count > best_count:
-                best_count, best_ep, best_offset = count, ep_id, mode_offset
+            if aligned_score > best_count:
+                best_count, best_ep, best_offset = aligned_score, ep_id, mode_offset
         
         # Sort candidates by aligned matches
         candidates.sort(key=lambda x: x['aligned_matches'], reverse=True)

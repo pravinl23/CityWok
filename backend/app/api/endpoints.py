@@ -438,14 +438,18 @@ async def _identify_with_progress(
         
         if result and result.get('episode_id'):
             await _send_progress(progress_queue, "complete", "Match found!")
-            await progress_queue.put({
+            response = {
                 "match_found": True,
                 "episode": result['episode_id'],
                 "timestamp": format_time(result['timestamp']),
                 "confidence": result.get('confidence', 0),
                 "aligned_matches": result.get('aligned_matches', 0),
                 "total_matches": result.get('total_matches', 0)
-            })
+            }
+            # Include uncertainty message if present
+            if 'message' in result:
+                response['message'] = result['message']
+            await progress_queue.put(response)
         else:
             await _send_progress(progress_queue, "complete", "No match found")
             await progress_queue.put({
@@ -654,7 +658,7 @@ async def identify_episode(
             result = audio_matcher.match_clip(audio_path)
         
         if result and result.get('episode_id'):
-            return {
+            response = {
                 "match_found": True,
                 "episode": result['episode_id'],
                 "timestamp": format_time(result['timestamp']),
@@ -662,6 +666,10 @@ async def identify_episode(
                 "aligned_matches": result.get('aligned_matches', 0),
                 "total_matches": result.get('total_matches', 0)
             }
+            # Include uncertainty message if present
+            if 'message' in result:
+                response['message'] = result['message']
+            return response
         else:
             return {
                 "match_found": False,

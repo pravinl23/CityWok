@@ -39,8 +39,9 @@ TEST_CASES = {
 }
 
 # API configuration
-API_URL = os.getenv("API_URL", "http://localhost:8000")
-TIMEOUT = 120  # 2 minutes per request
+API_URL = os.getenv("API_URL", "https://citywok-production.up.railway.app")
+TIMEOUT = 120  # 120 seconds per request
+INITIAL_TIMEOUT = 1  # 500 seconds for initial health check (allows time for cold start)
 
 
 def extract_season_from_episode_id(episode_id: str) -> Optional[int]:
@@ -224,16 +225,18 @@ if pytest:
 
 
 if __name__ == "__main__":
-    # Check if backend is running
+    # Check if backend is running (with extended timeout for cold start)
+    print(f"Checking backend health at {API_URL}...")
+    print(f"   (Waiting up to {INITIAL_TIMEOUT}s for cold start if needed)")
     try:
-        response = requests.get(f"{API_URL}/api/v1/test", timeout=3)
+        response = requests.get(f"{API_URL}/api/v1/test", timeout=INITIAL_TIMEOUT)
         if response.status_code != 200:
             print(f"❌ Backend is not responding correctly at {API_URL}")
             sys.exit(1)
+        print(f"✅ Backend is ready!\n")
     except Exception as e:
         print(f"❌ Backend is not running at {API_URL}")
         print(f"   Error: {e}")
-        print(f"   Start it with: cd backend && uvicorn app.main:app --reload")
         sys.exit(1)
     
     run_all_tests()
