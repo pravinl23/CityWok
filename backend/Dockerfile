@@ -5,12 +5,11 @@ FROM python:3.10-slim AS base
 
 WORKDIR /app
 
-# Install system dependencies (including LMDB and AWS CLI)
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     ffmpeg \
     curl \
-    liblmdb0 \
     zstd \
     awscli \
     && rm -rf /var/lib/apt/lists/*
@@ -23,7 +22,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create data directories
-RUN mkdir -p data/uploads data/fingerprints/v1
+RUN mkdir -p data/uploads
 
 # Make entrypoint script executable
 RUN chmod +x docker-entrypoint.sh

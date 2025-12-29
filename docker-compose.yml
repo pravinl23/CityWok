@@ -23,16 +23,11 @@ services:
       # Application settings
       - DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1
+      - MAX_SEASONS=${MAX_SEASONS:-20}
 
-      # LMDB mode (set to "true" to enable)
-      - USE_LMDB=${USE_LMDB:-false}
-      - DB_VERSION=${DB_VERSION:-v1}
-      # Limit to 5 seasons for local testing
-      - MAX_SEASONS=${MAX_SEASONS:-5}
-
-      # S3/R2 configuration (for downloading databases)
+      # S3/R2 configuration (for downloading pickle databases)
       - S3_BUCKET=${S3_BUCKET:-citywok-audio-db}
-      - S3_PREFIX=${S3_PREFIX:-fingerprints}
+      - S3_PREFIX=${S3_PREFIX:-pickle}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_REGION=${AWS_REGION:-auto}

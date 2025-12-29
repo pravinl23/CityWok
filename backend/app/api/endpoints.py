@@ -12,10 +12,7 @@ import json
 import asyncio
 from app.core.config import settings
 
-# Audio fingerprinting - support both pickle and LMDB modes
-USE_LMDB = os.getenv('USE_LMDB', 'false').lower() in ('true', '1', 'yes')
-
-# Import audio utilities (needed for both modes)
+# Audio fingerprinting - pickle mode only
 try:
     from app.core.audio_utils import extract_audio_to_memory
 except ImportError as e:
@@ -23,14 +20,9 @@ except ImportError as e:
     extract_audio_to_memory = None
 
 try:
-    if USE_LMDB:
-        print("🔧 Using LMDB mode for audio fingerprinting")
-        from app.services.audio_fingerprint_lmdb import audio_matcher_lmdb as audio_matcher
-        AUDIO_AVAILABLE = True
-    else:
-        print("🔧 Using pickle mode for audio fingerprinting (legacy)")
-        from app.services.audio_fingerprint import audio_matcher
-        AUDIO_AVAILABLE = True
+    print("🔧 Using pickle mode for audio fingerprinting")
+    from app.services.audio_fingerprint import audio_matcher
+    AUDIO_AVAILABLE = True
 except ImportError as e:
     print(f"Error: Audio fingerprinting not available: {e}")
     AUDIO_AVAILABLE = False

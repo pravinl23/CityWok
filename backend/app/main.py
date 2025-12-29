@@ -30,26 +30,13 @@ async def startup_event():
     os.makedirs(settings.DATA_DIR, exist_ok=True)
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
-    # Initialize LMDB databases if in LMDB mode
-    USE_LMDB = os.getenv('USE_LMDB', 'false').lower() in ('true', '1', 'yes')
-
-    if USE_LMDB:
-        print("\n🔧 Initializing LMDB audio fingerprint matcher...")
-        try:
-            from app.services.audio_fingerprint_lmdb import audio_matcher_lmdb
-            audio_matcher_lmdb.initialize()
-            print("✓ LMDB initialization complete")
-        except Exception as e:
-            print(f"⚠️  LMDB initialization failed: {e}")
-            import traceback
-            traceback.print_exc()
+    # Initialize pickle-based audio fingerprint matcher
+    LAZY_LOAD = os.getenv('LAZY_LOAD_PICKLE', 'false').lower() in ('true', '1', 'yes')
+    if LAZY_LOAD:
+        print("\n🔧 Using pickle mode with lazy loading (fast startup)")
     else:
-        LAZY_LOAD = os.getenv('LAZY_LOAD_PICKLE', 'false').lower() in ('true', '1', 'yes')
-        if LAZY_LOAD:
-            print("\n🔧 Using pickle mode with lazy loading (fast startup)")
-        else:
-            print("\n🔧 Using pickle mode (legacy - eager loading)")
-        # Databases will be loaded in AudioFingerprinter.__init__ (eager or lazy based on env var)
+        print("\n🔧 Using pickle mode (eager loading)")
+    # Databases will be loaded in AudioFingerprinter.__init__ (eager or lazy based on env var)
 
     print("="*60)
     print("✓ Startup complete!")

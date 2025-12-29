@@ -51,12 +51,26 @@ class AudioFingerprinter:
         # Number of parallel workers for season matching
         self.num_workers = int(os.getenv('MATCH_WORKERS', '16'))
         
+        # OPTIMIZATION A: Incremental fingerprinting config
+        self.incremental_durations = [3.0, 5.0, 8.0, 10.0]  # seconds
+        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '20'))
+        
+        # OPTIMIZATION B: Common hash filtering
+        self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
+        self.common_hash_stoplist: set = set()
+        
         # Check for lazy loading flag (default: False for backward compatibility)
         if lazy_load is None:
             lazy_load = os.getenv('LAZY_LOAD_PICKLE', 'false').lower() in ('true', '1', 'yes')
         self.lazy_load = lazy_load
         
         self._scan_databases()
+        
+        # OPTIMIZATION B: Load common hash stoplist if exists
+        stoplist_path = os.path.join(self.data_dir, 'common_hash_stoplist_pkl.txt')
+        if os.path.exists(stoplist_path):
+            self._load_stoplist(stoplist_path)
+            print(f"   ✓ Loaded {len(self.common_hash_stoplist):,} common hashes (stoplist)")
         
         if self.lazy_load:
             print(f"📦 Lazy loading mode: Skipping initial database load (will load on-demand)")
@@ -144,6 +158,65 @@ class AudioFingerprinter:
             print(f"✅ Loaded {len(self.loaded_seasons)} seasons ({total_eps} episodes) in {elapsed:.1f}s")
             print(f"📊 Total Data Size: {total_size:.1f}MB | {self.num_workers} parallel workers")
 
+    def _load_stoplist(self, stoplist_path: str):
+        """Load precomputed common hash stoplist from disk."""
+        try:
+            with open(stoplist_path, 'r') as f:
+                self.common_hash_stoplist = {line.strip() for line in f if line.strip()}
+        except Exception as e:
+            print(f"   ⚠️  Error loading stoplist: {e}")
+            self.common_hash_stoplist = set()
+    
+    def build_stoplist(self, top_percent: float = 0.05, min_occurrences: int = 500):
+        """
+        OPTIMIZATION B: Build a stoplist of the most common hashes.
+        
+        Args:
+            top_percent: Top X% of hashes by frequency to include
+            min_occurrences: Minimum number of occurrences to be considered common
+        """
+        print(f"🔧 Building common hash stoplist (top {top_percent*100}%, min {min_occurrences} occurrences)...")
+        
+        # Ensure all databases are loaded
+        if len(self.loaded_seasons) < len(self.existing_dbs):
+            self._load_all_databases()
+        
+        hash_counts = Counter()
+        
+        # Count hash frequencies across all seasons
+        for season, fingerprints in self.season_fingerprints.items():
+            print(f"   Scanning season {season:02d}...")
+            for h, arr in fingerprints.items():
+                hash_counts[h] += len(arr)
+        
+        # Sort by frequency and select top X%
+        total_hashes = len(hash_counts)
+        sorted_hashes = hash_counts.most_common()
+        
+        # Calculate cutoff
+        cutoff_count = int(total_hashes * top_percent)
+        top_hashes = sorted_hashes[:cutoff_count]
+        
+        # Also filter by minimum occurrences
+        common_hashes = {h for h, count in top_hashes if count >= min_occurrences}
+        
+        print(f"   ✓ Identified {len(common_hashes):,} common hashes")
+        if sorted_hashes:
+            print(f"   Example: hash '{sorted_hashes[0][0][:8]}...' appears {sorted_hashes[0][1]:,} times")
+        
+        # Save to disk
+        stoplist_path = os.path.join(self.data_dir, 'common_hash_stoplist_pkl.txt')
+        with open(stoplist_path, 'w') as f:
+            for h in common_hashes:
+                f.write(f"{h}\n")
+        
+        print(f"   ✓ Saved stoplist to {stoplist_path}")
+        
+        # Load into memory
+        self.common_hash_stoplist = common_hashes
+        
+        return len(common_hashes)
+    
     def _get_spectrogram_peaks(self, y: np.ndarray) -> List[Tuple[int, int]]:
         S = np.abs(librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length))
         S_db = librosa.amplitude_to_db(S, ref=np.max)
@@ -175,7 +248,11 @@ class AudioFingerprinter:
         return hashes
 
     def _match_season(self, season: int, query_prints: List[Tuple[str, float]]) -> Dict[str, List[float]]:
-        """Match query hashes against a single season's database."""
+        """
+        Match query hashes against a single season's database.
+        
+        OPTIMIZATION B: Filter common hashes via stoplist + posting list cap.
+        """
         season_matches = defaultdict(list)
 
         fingerprints = self.season_fingerprints.get(season, {})
@@ -185,10 +262,14 @@ class AudioFingerprinter:
             return season_matches
 
         for h, t_q in query_prints:
+            # OPTIMIZATION B: Skip if in stoplist
+            if h in self.common_hash_stoplist:
+                continue
+            
             if h in fingerprints:
                 arr = fingerprints[h]
-                # Skip overly common hashes within this season
-                if len(arr) > 1000:  # Per-season threshold
+                # OPTIMIZATION B: Cap posting list size
+                if len(arr) > self.max_posting_list_size:
                     continue
                 for x in arr:
                     ep_idx = x['ep_idx']
@@ -199,38 +280,209 @@ class AudioFingerprinter:
 
         return season_matches
 
-    def match_audio_array(self, audio_array: np.ndarray, sr: int) -> Dict[str, Any]:
+    def match_audio_array(self, audio_array: np.ndarray, sr: int, incremental: bool = True) -> Dict[str, Any]:
+        """
+        Match audio array with OPTIMIZATIONS A+B+C.
+        
+        Args:
+            audio_array: Audio time series
+            sr: Sample rate
+            incremental: If True, use incremental matching (default)
+        """
         # Lazy load all databases if in lazy mode and not yet loaded
         if self.lazy_load and len(self.loaded_seasons) < len(self.existing_dbs):
             print("📦 Lazy loading databases for matching...")
             self._load_all_databases()
 
         start_time = time.time()
+        
+        if incremental:
+            return self._match_incremental(audio_array, sr, start_time)
+        else:
+            return self._match_full(audio_array, sr, start_time)
+    
+    def _match_incremental(self, audio_array: np.ndarray, sr: int, start_time: float) -> Dict[str, Any]:
+        """
+        OPTIMIZATION A: Incremental fingerprinting.
+        
+        Start with 3 seconds, then extend to 5s, 8s, 10s.
+        Stop as soon as we find a confident match.
+        """
+        print("🔍 Using INCREMENTAL matching (Optimization A+B+C)")
+        
+        duration = len(audio_array) / sr
+        print(f"   Audio duration: {duration:.1f}s")
+        
+        # Incremental durations: 3s, 5s, 8s, 10s (or full duration)
+        durations = [d for d in self.incremental_durations if d <= duration]
+        if not durations or duration > self.incremental_durations[-1]:
+            durations.append(duration)
+        
+        all_matches = defaultdict(list)
+        total_fingerprints_generated = 0
+        
+        for step_idx, step_duration in enumerate(durations):
+            step_start = time.time()
+            
+            # Extract audio chunk
+            chunk_samples = int(step_duration * sr)
+            audio_chunk = audio_array[:chunk_samples]
+            
+            print(f"\n📊 Step {step_idx+1}/{len(durations)}: Fingerprinting {step_duration:.1f}s...")
+            
+            # Generate fingerprints for this chunk
+            peaks = self._get_spectrogram_peaks(audio_chunk)
+            chunk_fingerprints = self._create_hashes(peaks)
+            
+            if not chunk_fingerprints:
+                print("   No fingerprints found in chunk.")
+                continue
+            
+            total_fingerprints_generated = len(chunk_fingerprints)
+            print(f"   Generated {len(chunk_fingerprints)} hashes")
+            
+            # OPTIMIZATION B: Filter out common hashes
+            filtered_hashes = [
+                (h, t) for h, t in chunk_fingerprints 
+                if h not in self.common_hash_stoplist
+            ]
+            
+            filtered_count = len(chunk_fingerprints) - len(filtered_hashes)
+            if filtered_count > 0:
+                print(f"   Filtered {filtered_count} common hashes (stoplist)")
+            
+            if not filtered_hashes:
+                print("   All hashes were common - extending...")
+                continue
+            
+            # Search all seasons in parallel
+            print(f"   Searching {len(filtered_hashes)} hashes across {len(self.loaded_seasons)} seasons...")
+            lookup_start = time.time()
+            
+            step_matches = defaultdict(list)
+            
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                future_to_season = {
+                    executor.submit(self._match_season, season, filtered_hashes): season
+                    for season in self.loaded_seasons
+                }
+
+                for future in as_completed(future_to_season):
+                    try:
+                        season_matches = future.result()
+                        for ep_id, offsets in season_matches.items():
+                            all_matches[ep_id].extend(offsets)
+                            step_matches[ep_id].extend(offsets)
+                    except Exception as e:
+                        pass  # Silent fail for individual seasons
+            
+            lookup_time = time.time() - lookup_start
+            print(f"   ⏱️  Lookup: {lookup_time:.2f}s")
+            
+            # Check if we have a confident match
+            if step_matches:
+                best_ep, best_off, best_cnt, _ = self._find_best_alignment(step_matches)
+                print(f"   🎯 Best match: {best_ep} ({best_cnt} aligned hashes)")
+                
+                # OPTIMIZATION A: Early exit if confident
+                if best_cnt >= self.min_aligned_early_exit:
+                    elapsed = time.time() - start_time
+                    print(f"\n🚀 CONFIDENT MATCH found at step {step_idx+1}/{len(durations)}")
+                    print(f"   Only fingerprinted {step_duration:.1f}s (vs {duration:.1f}s full)")
+                    print(f"   Total time: {elapsed:.2f}s")
+                    
+                    confidence = min(99, int((best_cnt / len(chunk_fingerprints)) * 1000))
+                    
+                    return {
+                        "episode_id": best_ep,
+                        "timestamp": max(0, best_off),
+                        "confidence": confidence,
+                        "aligned_matches": best_cnt,
+                        "total_matches": len(all_matches[best_ep]),
+                        "method": f"incremental_pkl_step_{step_idx+1}",
+                        "processing_time": elapsed,
+                        "duration_used": step_duration,
+                        "duration_saved": duration - step_duration
+                    }
+            
+            step_time = time.time() - step_start
+            print(f"   Step {step_idx+1} total: {step_time:.2f}s")
+        
+        # No confident match found after all steps
+        print(f"\n⚠️  No confident match after all incremental steps")
+        
+        if all_matches:
+            best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(all_matches)
+            elapsed = time.time() - start_time
+            
+            print(f"⏱️  Total matching took {elapsed:.2f}s")
+            print("📊 Top 10 Candidates:")
+            for c in top_candidates[:10]:
+                print(f"   - {c['episode_id']}: {c['aligned_matches']} aligned")
+            
+            # Return best match even if below threshold
+            if best_count >= 5:
+                confidence = int((best_count / total_fingerprints_generated) * 100) if total_fingerprints_generated > 0 else 0
+                return {
+                    "episode_id": best_episode,
+                    "timestamp": max(0, best_offset),
+                    "confidence": confidence,
+                    "aligned_matches": best_count,
+                    "total_matches": len(all_matches[best_episode]),
+                    "method": "incremental_pkl_weak",
+                    "processing_time": elapsed
+                }
+        
+        return {}
+    
+    def _match_full(self, audio_array: np.ndarray, sr: int, start_time: float) -> Dict[str, Any]:
+        """
+        Full audio matching (non-incremental, for backward compatibility).
+        Still uses optimization B (common hash filtering).
+        """
+        print("🔍 Using FULL matching (Optimization B+C, no incremental)")
+        
         peaks = self._get_spectrogram_peaks(audio_array)
         query_prints = self._create_hashes(peaks)
-        if not query_prints: return {}
+        if not query_prints:
+            return {}
 
         total_query_hashes = len(query_prints)
-        print(f"🔍 Searching across {len(self.loaded_seasons)} seasons in parallel...")
+        print(f"   Generated {total_query_hashes} hashes")
+        
+        # OPTIMIZATION B: Filter common hashes
+        filtered_hashes = [
+            (h, t) for h, t in query_prints 
+            if h not in self.common_hash_stoplist
+        ]
+        
+        filtered_count = len(query_prints) - len(filtered_hashes)
+        if filtered_count > 0:
+            print(f"   Filtered {filtered_count} common hashes (stoplist)")
+        
+        if not filtered_hashes:
+            print("   All hashes were common.")
+            return {}
+        
+        print(f"🔍 Searching {len(filtered_hashes)} hashes across {len(self.loaded_seasons)} seasons...")
 
         # Two-pass strategy with parallel season search
-        # Pass 1: Quick search with 1000 hashes
-        # Pass 2: If no strong match, search with 3000 more hashes
         passes = [1000, 3000]
         all_matches = defaultdict(list)
         queried_indices = set()
 
         for pass_idx, num_to_query in enumerate(passes):
             # Sample indices we haven't queried yet
-            remaining_indices = [i for i in range(total_query_hashes) if i not in queried_indices]
-            if not remaining_indices: break
+            remaining_indices = [i for i in range(len(filtered_hashes)) if i not in queried_indices]
+            if not remaining_indices:
+                break
 
             sample_size = min(num_to_query, len(remaining_indices))
             step = max(1, len(remaining_indices) // sample_size)
             current_indices = remaining_indices[::step][:sample_size]
             queried_indices.update(current_indices)
 
-            current_query = [query_prints[i] for i in current_indices]
+            current_query = [filtered_hashes[i] for i in current_indices]
 
             # Search all seasons in parallel
             pass_matches = defaultdict(list)
@@ -268,7 +520,7 @@ class AudioFingerprinter:
 
         elapsed = time.time() - start_time
         print(f"⏱️  Parallel matching took {elapsed:.2f}s")
-        print("📊 Top 10 Candidates (Aligned Matches):")
+        print("📊 Top 10 Candidates:")
         for c in top_candidates[:10]:
             print(f"   - {c['episode_id']}: {c['aligned_matches']} aligned ({c['raw_matches']} raw)")
 
@@ -283,7 +535,7 @@ class AudioFingerprinter:
                 "confidence": confidence,
                 "aligned_matches": best_count,
                 "total_matches": len(all_matches[best_episode]),
-                "method": "audio_pkl_parallel_v5",
+                "method": "audio_pkl_full",
                 "processing_time": elapsed
             }
         return {}

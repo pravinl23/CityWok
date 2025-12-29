@@ -14,8 +14,7 @@ numpy
 yt-dlp
 curl-cffi
 
-# LMDB Storage (for production deployment)
-lmdb>=1.4.0
+# Cloud Storage (S3/R2) support
 xxhash>=3.0.0
 zstandard>=0.21.0
 

@@ -24,9 +24,6 @@ cd backend
 # Ingest multiple seasons
 ./scripts/ingest_all_seasons.sh 1 15
 
-# Offline LMDB ingestion
-python scripts/ingestion/offline_ingest.py "/path/to/Season 1" 1
-
 # Ingest missing episodes
 python scripts/ingestion/ingest_missing_seasons.py
 ```
@@ -91,5 +88,5 @@ export AWS_ACCESS_KEY_ID="your-access-key"
 export AWS_SECRET_ACCESS_KEY="your-secret-key"
 export AWS_ENDPOINT_URL="https://your-r2-endpoint"  # For Cloudflare R2
 export S3_BUCKET="citywok-audio-db"
-export S3_PREFIX="fingerprints"
+export S3_PREFIX="pickle"
 ```
