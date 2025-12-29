@@ -57,7 +57,7 @@ class AudioFingerprinter:
         
         # Multi-window sampling config
         self.use_multi_window = True
-        self.num_windows = 4  # Sample 4 windows across the clip
+        self.num_windows = 2  # Sample 2 windows across the clip (reduced for short TikTok videos)
         self.min_window_agreement = 1  # Require same episode to win in ≥1 windows (relaxed for short clips)
         
         # Margin/confidence requirements for early exit
@@ -74,16 +74,16 @@ class AudioFingerprinter:
         self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
         self.common_hash_stoplist: set = set()
         
-        # Query-time DF-based stoplist (OPTIMIZATION 3)
-        self.df_hard_threshold = 25   # Drop hashes appearing in ≥25 episodes
-        self.df_soft_threshold = 10   # Downweight hashes appearing in 10-24 episodes
-        self.soft_downweight = 0.3    # Weight multiplier for soft threshold
-        
+        # Query-time DF-based stoplist (OPTIMIZATION 3) - DISABLED for short TikTok clips
+        self.df_hard_threshold = 100   # Drop hashes appearing in ≥100 episodes (very permissive)
+        self.df_soft_threshold = 50   # Downweight hashes appearing in 50-99 episodes (relaxed)
+        self.soft_downweight = 0.7    # Weight multiplier for soft threshold (less aggressive)
+
         # Cap per-hash contribution per candidate (prevents spam)
-        self.max_hash_votes_per_candidate = 1  # Each hash can only vote once per candidate
-        
-        # IDF weighting (for down-weighting common hashes)
-        self.use_idf_weighting = True
+        self.max_hash_votes_per_candidate = 3  # Allow more votes per hash (relaxed for short clips)
+
+        # IDF weighting (for down-weighting common hashes) - DISABLED for short clips
+        self.use_idf_weighting = False
         self.hash_df_cache = {}  # Cache document frequencies
         
         # Check for lazy loading flag (default: False for backward compatibility)
@@ -93,11 +93,12 @@ class AudioFingerprinter:
         
         self._scan_databases()
         
-        # OPTIMIZATION B: Load common hash stoplist if exists
-        stoplist_path = os.path.join(self.data_dir, 'common_hash_stoplist_pkl.txt')
-        if os.path.exists(stoplist_path):
-            self._load_stoplist(stoplist_path)
-            print(f"   ✓ Loaded {len(self.common_hash_stoplist):,} common hashes (stoplist)")
+        # OPTIMIZATION B: Load common hash stoplist if exists - DISABLED for TikTok matching
+        # stoplist_path = os.path.join(self.data_dir, 'common_hash_stoplist_pkl.txt')
+        # if os.path.exists(stoplist_path):
+        #     self._load_stoplist(stoplist_path)
+        #     print(f"   ✓ Loaded {len(self.common_hash_stoplist):,} common hashes (stoplist)")
+        print(f"   ⚠️  Common hash stoplist DISABLED for better TikTok matching")
         
         if self.lazy_load:
             print(f"📦 Lazy loading mode: Skipping initial database load (will load on-demand)")
