@@ -61,9 +61,9 @@ class AudioFingerprinter:
         self.min_window_agreement = 1  # Require same episode to win in ≥1 windows (relaxed for short clips)
         
         # Margin/confidence requirements for early exit
-        self.min_confidence_ratio = 1.15   # top1/top2 aligned ratio (relaxed for TikTok videos)
-        self.min_confidence_margin = 8   # top1 - top2 aligned difference (relaxed for short clips)
-        self.min_peak_sharpness = 1.05     # peak/second_peak ratio (adaptive)
+        self.min_confidence_ratio = 1.01   # top1/top2 aligned ratio (very permissive for TikTok)
+        self.min_confidence_margin = 1   # top1 - top2 aligned difference (very permissive)
+        self.min_peak_sharpness = 1.01     # peak/second_peak ratio (very permissive)
         
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
