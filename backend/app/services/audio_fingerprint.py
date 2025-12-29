@@ -57,33 +57,33 @@ class AudioFingerprinter:
         
         # Multi-window sampling config
         self.use_multi_window = True
-        self.num_windows = 2  # Sample 2 windows across the clip (reduced for short TikTok videos)
-        self.min_window_agreement = 1  # Require same episode to win in ≥1 windows (relaxed for short clips)
-        
+        self.num_windows = 3  # Sample 3 windows for better consensus
+        self.min_window_agreement = 2  # Require 2/3 windows to agree
+
         # Margin/confidence requirements for early exit
-        self.min_confidence_ratio = 1.01   # top1/top2 aligned ratio (very permissive for TikTok)
-        self.min_confidence_margin = 1   # top1 - top2 aligned difference (very permissive)
-        self.min_peak_sharpness = 1.01     # peak/second_peak ratio (very permissive)
-        
+        self.min_confidence_ratio = 1.3   # top1/top2 aligned ratio (balanced)
+        self.min_confidence_margin = 10   # top1 - top2 aligned difference (balanced)
+        self.min_peak_sharpness = 1.15     # peak/second_peak ratio (balanced)
+
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
-        self.high_ratio_threshold = 2.0   # If ratio >= 2.0, relax sharpness (lowered threshold)
-        self.relaxed_sharpness = 1.02      # Relaxed sharpness threshold (very permissive)
+        self.high_ratio_threshold = 2.5   # If ratio >= 2.5, relax sharpness
+        self.relaxed_sharpness = 1.08      # Relaxed sharpness threshold
         
         # OPTIMIZATION B: Common hash filtering (aggressive)
         self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
         self.common_hash_stoplist: set = set()
         
-        # Query-time DF-based stoplist (OPTIMIZATION 3) - DISABLED for short TikTok clips
-        self.df_hard_threshold = 100   # Drop hashes appearing in ≥100 episodes (very permissive)
-        self.df_soft_threshold = 50   # Downweight hashes appearing in 50-99 episodes (relaxed)
-        self.soft_downweight = 0.7    # Weight multiplier for soft threshold (less aggressive)
+        # Query-time DF-based stoplist (OPTIMIZATION 3)
+        self.df_hard_threshold = 40   # Drop hashes appearing in ≥40 episodes (balanced)
+        self.df_soft_threshold = 20   # Downweight hashes appearing in 20-39 episodes (balanced)
+        self.soft_downweight = 0.5    # Weight multiplier for soft threshold (balanced)
 
         # Cap per-hash contribution per candidate (prevents spam)
-        self.max_hash_votes_per_candidate = 3  # Allow more votes per hash (relaxed for short clips)
+        self.max_hash_votes_per_candidate = 2  # Allow 2 votes per hash (balanced)
 
-        # IDF weighting (for down-weighting common hashes) - DISABLED for short clips
-        self.use_idf_weighting = False
+        # IDF weighting (for down-weighting common hashes) - RE-ENABLED for accuracy
+        self.use_idf_weighting = True
         self.hash_df_cache = {}  # Cache document frequencies
         
         # Check for lazy loading flag (default: False for backward compatibility)
