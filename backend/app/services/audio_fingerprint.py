@@ -61,9 +61,9 @@ class AudioFingerprinter:
         self.min_window_agreement = 2  # Require 2/3 windows to agree
 
         # Margin/confidence requirements for early exit
-        self.min_confidence_ratio = 1.3   # top1/top2 aligned ratio (balanced)
-        self.min_confidence_margin = 10   # top1 - top2 aligned difference (balanced)
-        self.min_peak_sharpness = 1.15     # peak/second_peak ratio (balanced)
+        self.min_confidence_ratio = 1.2   # top1/top2 aligned ratio (slightly relaxed)
+        self.min_confidence_margin = 5   # top1 - top2 aligned difference (slightly relaxed)
+        self.min_peak_sharpness = 1.1     # peak/second_peak ratio (slightly relaxed)
 
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
@@ -893,13 +893,26 @@ class AudioFingerprinter:
         
         # OPTIMIZATION 3B: Soft downweight
         import math
-        base_weight = 1.0 / math.log(1 + df)
-        
+
+        # Safety check: ensure df is valid
+        if df <= 0:
+            return 1.0, False
+
+        # Calculate IDF weight with safety check
+        log_val = math.log(1 + df)
+        if log_val <= 0:
+            base_weight = 1.0
+        else:
+            base_weight = 1.0 / log_val
+
+        # Clamp weight to reasonable range to prevent NaN/inf
+        base_weight = min(max(base_weight, 0.01), 10.0)
+
         if df >= self.df_soft_threshold:
             weight = base_weight * self.soft_downweight
         else:
             weight = base_weight
-        
+
         return weight, False
     
     def _build_hash_df_cache(self):
