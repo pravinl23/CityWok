@@ -53,22 +53,22 @@ class AudioFingerprinter:
         
         # OPTIMIZATION A: Incremental fingerprinting config
         self.incremental_durations = [3.0, 5.0, 8.0, 10.0]  # seconds
-        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '35'))
+        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '20'))
         
         # Multi-window sampling config
         self.use_multi_window = True
         self.num_windows = 4  # Sample 4 windows across the clip
-        self.min_window_agreement = 2  # Require same episode to win in ≥2 windows
+        self.min_window_agreement = 1  # Require same episode to win in ≥1 windows (relaxed for short clips)
         
         # Margin/confidence requirements for early exit
-        self.min_confidence_ratio = 1.5   # top1/top2 aligned ratio (raised from 1.35)
-        self.min_confidence_margin = 20   # top1 - top2 aligned difference (raised from 15)
-        self.min_peak_sharpness = 1.2     # peak/second_peak ratio (adaptive)
+        self.min_confidence_ratio = 1.15   # top1/top2 aligned ratio (relaxed for TikTok videos)
+        self.min_confidence_margin = 8   # top1 - top2 aligned difference (relaxed for short clips)
+        self.min_peak_sharpness = 1.05     # peak/second_peak ratio (adaptive)
         
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
-        self.high_ratio_threshold = 3.0   # If ratio >= 3.0, relax sharpness
-        self.relaxed_sharpness = 1.1      # Relaxed sharpness threshold
+        self.high_ratio_threshold = 2.0   # If ratio >= 2.0, relax sharpness (lowered threshold)
+        self.relaxed_sharpness = 1.02      # Relaxed sharpness threshold (very permissive)
         
         # OPTIMIZATION B: Common hash filtering (aggressive)
         self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
