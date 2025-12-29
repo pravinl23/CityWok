@@ -963,7 +963,12 @@ class AudioFingerprinter:
                     offset = item
                     weight = 1.0
                     offsets_only.append(offset)
-                
+
+                # Safety check: skip invalid weights
+                import math
+                if not math.isfinite(weight) or weight < 0:
+                    weight = 1.0
+
                 binned_offset = round(offset * 2) / 2
                 offset_weights[binned_offset] += float(weight)
             
@@ -972,16 +977,25 @@ class AudioFingerprinter:
             
             # Find mode offset (highest weighted bin)
             mode_offset, aligned_score = max(offset_weights.items(), key=lambda x: x[1])
-            
+
+            # Safety check: ensure aligned_score is finite
+            import math
+            if not math.isfinite(aligned_score):
+                aligned_score = float(len(items))  # Fallback to raw count
+
             # Calculate peak sharpness (on raw offsets, not weighted)
             sharpness = self._calculate_peak_sharpness(offsets_only)
-            
+
+            # Safety check: ensure sharpness is finite
+            if not math.isfinite(sharpness):
+                sharpness = 1.0
+
             candidates.append({
                 "episode_id": ep_id,
-                "aligned_matches": aligned_score,
+                "aligned_matches": float(aligned_score),  # Ensure JSON-serializable
                 "raw_matches": len(items),
-                "offset": mode_offset,
-                "sharpness": sharpness
+                "offset": float(mode_offset),
+                "sharpness": float(sharpness)
             })
             
             if aligned_score > best_score:
