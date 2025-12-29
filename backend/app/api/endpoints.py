@@ -436,7 +436,9 @@ async def _identify_with_progress(
         # Searching
         await _send_progress(progress_queue, "searching", "Searching database for matches...")
         
-        if result and result.get('episode_id'):
+        # Handle new response format with match_found flag
+        if result and result.get('match_found'):
+            # Confident match found
             await _send_progress(progress_queue, "complete", "Match found!")
             response = {
                 "match_found": True,
@@ -446,11 +448,22 @@ async def _identify_with_progress(
                 "aligned_matches": result.get('aligned_matches', 0),
                 "total_matches": result.get('total_matches', 0)
             }
-            # Include uncertainty message if present
             if 'message' in result:
                 response['message'] = result['message']
             await progress_queue.put(response)
+        elif result and result.get('candidates'):
+            # Low confidence - return candidates
+            await _send_progress(progress_queue, "complete", "Low confidence match")
+            response = {
+                "match_found": False,
+                "reason": result.get('reason', 'low_confidence'),
+                "message": result.get('message', 'Unable to confidently identify episode'),
+                "candidates": result['candidates'],
+                "quality_metrics": result.get('quality_metrics', {})
+            }
+            await progress_queue.put(response)
         else:
+            # No matches at all
             await _send_progress(progress_queue, "complete", "No match found")
             await progress_queue.put({
                 "match_found": False,
@@ -657,7 +670,9 @@ async def identify_episode(
                 background_tasks.add_task(cleanup_file, temp_path)
             result = audio_matcher.match_clip(audio_path)
         
-        if result and result.get('episode_id'):
+        # Handle new response format with match_found flag
+        if result and result.get('match_found'):
+            # Confident match found
             response = {
                 "match_found": True,
                 "episode": result['episode_id'],
@@ -666,11 +681,20 @@ async def identify_episode(
                 "aligned_matches": result.get('aligned_matches', 0),
                 "total_matches": result.get('total_matches', 0)
             }
-            # Include uncertainty message if present
             if 'message' in result:
                 response['message'] = result['message']
             return response
+        elif result and result.get('candidates'):
+            # Low confidence - return candidates
+            return {
+                "match_found": False,
+                "reason": result.get('reason', 'low_confidence'),
+                "message": result.get('message', 'Unable to confidently identify episode'),
+                "candidates": result['candidates'],
+                "quality_metrics": result.get('quality_metrics', {})
+            }
         else:
+            # No matches at all
             return {
                 "match_found": False,
                 "message": "No confident match found in database"

@@ -61,13 +61,26 @@ class AudioFingerprinter:
         self.min_window_agreement = 2  # Require same episode to win in ≥2 windows
         
         # Margin/confidence requirements for early exit
-        self.min_confidence_ratio = 1.35  # top1/top2 aligned ratio
-        self.min_confidence_margin = 15   # top1 - top2 aligned difference
-        self.min_peak_sharpness = 1.3     # peak/second_peak ratio in offset histogram
+        self.min_confidence_ratio = 1.5   # top1/top2 aligned ratio (raised from 1.35)
+        self.min_confidence_margin = 20   # top1 - top2 aligned difference (raised from 15)
+        self.min_peak_sharpness = 1.2     # peak/second_peak ratio (adaptive)
         
-        # OPTIMIZATION B: Common hash filtering
+        # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
+        self.adaptive_sharpness = True
+        self.high_ratio_threshold = 3.0   # If ratio >= 3.0, relax sharpness
+        self.relaxed_sharpness = 1.1      # Relaxed sharpness threshold
+        
+        # OPTIMIZATION B: Common hash filtering (aggressive)
         self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
         self.common_hash_stoplist: set = set()
+        
+        # Query-time DF-based stoplist (OPTIMIZATION 3)
+        self.df_hard_threshold = 25   # Drop hashes appearing in ≥25 episodes
+        self.df_soft_threshold = 10   # Downweight hashes appearing in 10-24 episodes
+        self.soft_downweight = 0.3    # Weight multiplier for soft threshold
+        
+        # Cap per-hash contribution per candidate (prevents spam)
+        self.max_hash_votes_per_candidate = 1  # Each hash can only vote once per candidate
         
         # IDF weighting (for down-weighting common hashes)
         self.use_idf_weighting = True
@@ -269,9 +282,10 @@ class AudioFingerprinter:
         """
         Match query hashes against a single season's database.
         
-        OPTIMIZATION B: Filter common hashes via stoplist + posting list cap.
+        OPTIMIZATION B+3: Filter common hashes + cap per-hash contribution.
         """
         season_matches = defaultdict(list)
+        hash_seen_per_episode = defaultdict(set)  # Track which hashes voted for each episode
 
         fingerprints = self.season_fingerprints.get(season, {})
         episode_list = self.season_episodes.get(season, [])
@@ -284,15 +298,29 @@ class AudioFingerprinter:
             if h in self.common_hash_stoplist:
                 continue
             
+            # OPTIMIZATION 3: Query-time DF filtering
+            if self.use_idf_weighting and h in self.hash_df_cache:
+                _, should_skip = self._calculate_idf_weight(h)
+                if should_skip:
+                    continue
+            
             if h in fingerprints:
                 arr = fingerprints[h]
                 # OPTIMIZATION B: Cap posting list size
                 if len(arr) > self.max_posting_list_size:
                     continue
+                
+                # OPTIMIZATION 3B: Cap per-hash contribution per candidate
                 for x in arr:
                     ep_idx = x['ep_idx']
-                    t_db = x['offset']
                     ep_id = episode_list[ep_idx]
+                    
+                    # Only allow each hash to vote once per episode
+                    if h in hash_seen_per_episode[ep_id]:
+                        continue
+                    
+                    hash_seen_per_episode[ep_id].add(h)
+                    t_db = x['offset']
                     offset = t_db - t_q
                     season_matches[ep_id].append(offset)
 
@@ -473,7 +501,7 @@ class AudioFingerprinter:
         
         elapsed = time.time() - start_time
         
-        # Check quality criteria
+        # OPTIMIZATION 1: Check quality criteria - RETURN NULL if fails
         if len(candidates) >= 2:
             top1_aligned = candidates[0]['aligned_matches']
             top2_aligned = candidates[1]['aligned_matches']
@@ -481,19 +509,68 @@ class AudioFingerprinter:
             margin = top1_aligned - top2_aligned
             sharpness = candidates[0].get('sharpness', 0.0)
             
+            # OPTIMIZATION 6: Adaptive sharpness threshold
+            if self.adaptive_sharpness and ratio >= self.high_ratio_threshold:
+                required_sharpness = self.relaxed_sharpness
+                sharpness_note = f"(relaxed: {self.relaxed_sharpness} due to high ratio)"
+            else:
+                required_sharpness = self.min_peak_sharpness
+                sharpness_note = f"(standard: {self.min_peak_sharpness})"
+            
             print(f"\n   Quality check:")
             print(f"      Top1: {candidates[0]['episode_id']} ({top1_aligned:.1f} aligned)")
             print(f"      Top2: {candidates[1]['episode_id']} ({top2_aligned:.1f} aligned)")
             print(f"      Ratio: {ratio:.2f} (need {self.min_confidence_ratio})")
             print(f"      Margin: {margin:.1f} (need {self.min_confidence_margin})")
-            print(f"      Sharpness: {sharpness:.2f} (need {self.min_peak_sharpness})")
+            print(f"      Sharpness: {sharpness:.2f} (need {required_sharpness}) {sharpness_note}")
             print(f"      Window wins: {num_wins}/{len(windows)} (need {self.min_window_agreement})")
+            
+            # Check ALL quality gates
+            ratio_pass = ratio >= self.min_confidence_ratio
+            margin_pass = margin >= self.min_confidence_margin
+            sharpness_pass = sharpness >= required_sharpness
+            window_pass = num_wins >= self.min_window_agreement
+            
+            quality_passed = ratio_pass and margin_pass and sharpness_pass and window_pass
+            
+            if not quality_passed:
+                # OPTIMIZATION 1: Return null with candidates instead of forcing wrong answer
+                print(f"\n   ❌ QUALITY CHECK FAILED - returning candidates only")
+                print(f"      Ratio: {'✓' if ratio_pass else '✗'}")
+                print(f"      Margin: {'✓' if margin_pass else '✗'}")
+                print(f"      Sharpness: {'✓' if sharpness_pass else '✗'}")
+                print(f"      Windows: {'✓' if window_pass else '✗'}")
+                
+                return {
+                    "match_found": False,
+                    "reason": "low_confidence",
+                    "message": "Unable to confidently identify episode - match quality too low",
+                    "candidates": [
+                        {
+                            "episode_id": c['episode_id'],
+                            "aligned_matches": int(c['aligned_matches']),
+                            "offset": c['offset'],
+                            "sharpness": round(c.get('sharpness', 0.0), 2)
+                        }
+                        for c in candidates[:3]
+                    ],
+                    "quality_metrics": {
+                        "ratio": round(ratio, 2),
+                        "margin": round(margin, 1),
+                        "sharpness": round(sharpness, 2),
+                        "window_agreement": f"{num_wins}/{len(windows)}"
+                    },
+                    "processing_time": elapsed
+                }
+            
+            # Quality check passed - return confident match
+            print(f"\n   ✅ QUALITY CHECK PASSED")
             
             # Calculate confidence
             confidence = min(99, int((top1_aligned / max(1, len(all_matches[best_episode]))) * 100))
             
-            # Build result
-            result = {
+            return {
+                "match_found": True,
                 "episode_id": best_episode,
                 "timestamp": max(0, best_offset),
                 "confidence": confidence,
@@ -505,25 +582,22 @@ class AudioFingerprinter:
                 "quality_ratio": round(ratio, 2),
                 "quality_sharpness": round(sharpness, 2)
             }
-            
-            # Add uncertainty message if confidence < 50
-            if confidence < 50:
-                result["message"] = "⚠️ Low confidence - this is my best guess but I'm not sure"
-                print(f"\n   ⚠️  LOW CONFIDENCE ({confidence}%) - uncertain match")
-            
-            return result
         
-        # Single candidate or no candidates
-        confidence = 30 if best_count > 10 else 10
+        # Single candidate or no candidates - insufficient data
+        print(f"\n   ❌ INSUFFICIENT CANDIDATES (need ≥2 for comparison)")
         return {
-            "episode_id": best_episode,
-            "timestamp": max(0, best_offset),
-            "confidence": confidence,
-            "aligned_matches": int(best_count),
-            "total_matches": len(all_matches[best_episode]),
-            "method": "multi_window_weak",
-            "processing_time": elapsed,
-            "message": "⚠️ Low confidence - this is my best guess but I'm not sure"
+            "match_found": False,
+            "reason": "insufficient_candidates",
+            "message": "Unable to confidently identify episode - not enough data",
+            "candidates": [
+                {
+                    "episode_id": c['episode_id'],
+                    "aligned_matches": int(c['aligned_matches']),
+                    "offset": c['offset']
+                }
+                for c in candidates[:1]
+            ] if candidates else [],
+            "processing_time": elapsed
         }
     
     def _match_incremental_single(self, audio_array: np.ndarray, sr: int, start_time: float, duration: float) -> Dict[str, Any]:
@@ -638,6 +712,7 @@ class AudioFingerprinter:
                         confidence = min(99, int((best_cnt / total_fingerprints_generated) * 100))
                         
                         result = {
+                            "match_found": True,
                             "episode_id": best_ep,
                             "timestamp": max(0, best_off),
                             "confidence": confidence,
@@ -676,26 +751,28 @@ class AudioFingerprinter:
                 sharpness = c.get('sharpness', 0.0)
                 print(f"   - {c['episode_id']}: {c['aligned_matches']:.1f} aligned (sharpness: {sharpness:.2f})")
             
-            # Return best match even if below threshold
+            # Return candidates only (no confident match)
             if best_count >= 5:
-                confidence = min(99, int((best_count / total_fingerprints_generated) * 100)) if total_fingerprints_generated > 0 else 10
-                
-                result = {
-                    "episode_id": best_episode,
-                    "timestamp": max(0, best_offset),
-                    "confidence": confidence,
-                    "aligned_matches": int(best_count),
-                    "total_matches": len(all_matches[best_episode]),
-                    "method": "incremental_pkl_weak",
+                return {
+                    "match_found": False,
+                    "reason": "low_confidence",
+                    "message": "Unable to confidently identify episode - match quality too low",
+                    "candidates": [
+                        {
+                            "episode_id": c['episode_id'],
+                            "aligned_matches": int(c['aligned_matches']),
+                            "offset": c['offset'],
+                            "sharpness": round(c.get('sharpness', 0.0), 2)
+                        }
+                        for c in top_candidates[:3]
+                    ],
                     "processing_time": elapsed
                 }
-                
-                # Always add warning for weak matches
-                result["message"] = "⚠️ Low confidence - this is my best guess but I'm not sure"
-                
-                return result
         
-        return {}
+        return {
+            "match_found": False,
+            "message": "No matches found in database"
+        }
     
     def _match_full(self, audio_array: np.ndarray, sr: int, start_time: float) -> Dict[str, Any]:
         """
@@ -826,18 +903,34 @@ class AudioFingerprinter:
         
         return peak / (second + 1)  # +1 to avoid division by zero
     
-    def _calculate_idf_weight(self, hash_str: str) -> float:
-        """Calculate IDF weight for a hash based on document frequency."""
+    def _calculate_idf_weight(self, hash_str: str) -> Tuple[float, bool]:
+        """
+        Calculate IDF weight for a hash based on document frequency.
+        
+        Returns: (weight, should_skip)
+        - weight: IDF weight for scoring
+        - should_skip: True if hash is too common and should be dropped
+        """
         if not self.use_idf_weighting:
-            return 1.0
+            return 1.0, False
         
         # Get document frequency (number of episodes this hash appears in)
         df = self.hash_df_cache.get(hash_str, 1)
         
-        # IDF: inverse document frequency
-        # Common hashes (high df) get low weight
+        # OPTIMIZATION 3A: Query-time stoplist
+        if df >= self.df_hard_threshold:
+            return 0.0, True  # Skip completely
+        
+        # OPTIMIZATION 3B: Soft downweight
         import math
-        return 1.0 / math.log(1 + df)
+        base_weight = 1.0 / math.log(1 + df)
+        
+        if df >= self.df_soft_threshold:
+            weight = base_weight * self.soft_downweight
+        else:
+            weight = base_weight
+        
+        return weight, False
     
     def _build_hash_df_cache(self):
         """Build document frequency cache for IDF weighting."""
