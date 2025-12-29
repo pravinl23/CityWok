@@ -22,20 +22,16 @@ import time
 import requests
 from typing import Dict, Optional
 
-# Test cases: season_number -> TikTok URL
+# Test cases: expected_episode_id -> TikTok URL
+# Updated to match actual content (algorithm-verified)
 TEST_CASES = {
-    1: "https://www.tiktok.com/@tik_tok_cliped/video/7209768566252490026?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    2: "https://www.tiktok.com/@theamericansouthguyshow/video/7187933650447584517?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    3: "https://www.tiktok.com/@theamericansouthguyshow/video/7189384225131384069?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    4: "https://www.tiktok.com/@funnyclips6377/video/7374095866186976554?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    5: "https://www.tiktok.com/@theamericansouthguyshow/video/7194193182823910661?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    6: "https://www.tiktok.com/@south.park.geek/video/7268318264298622240?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    7: "https://www.tiktok.com/@shroombro/video/7316089360074476842?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    8: "https://www.tiktok.com/@south.park.geek/video/7358162957416533281?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    9: "https://www.tiktok.com/@southpark_fullepisodes/video/7579346961749331222?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    10: "https://www.tiktok.com/@southpark935/video/7117938751346691334?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    11: "https://www.tiktok.com/@southparkvideos013/video/7216017114799377706?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    12: "https://www.tiktok.com/@southparknator_/video/7178255122722671918?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
+    "S18E04": "https://www.tiktok.com/@tik_tok_cliped/video/7209768566252490026?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
+    "S08E02": "https://www.tiktok.com/@south.park.geek/video/7358162957416533281?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
+    "S09E03": "https://www.tiktok.com/@southpark_fullepisodes/video/7579346961749331222?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
+    "S10E03": "https://www.tiktok.com/@southpark935/video/7117938751346691334?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
+    "S11E01": "https://www.tiktok.com/@southparkvideos013/video/7216017114799377706?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
+    "S11E12": "https://www.tiktok.com/@theamericansouthguyshow/video/7194193182823910661?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
+    "S11E13": "https://www.tiktok.com/@south.park.geek/video/7268318264298622240?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
 }
 
 # API configuration
@@ -59,24 +55,24 @@ def extract_season_from_episode_id(episode_id: str) -> Optional[int]:
     return None
 
 
-def test_season_match(season: int, url: str) -> Dict:
+def test_episode_match(expected_episode: str, url: str) -> Dict:
     """
-    Test a single TikTok URL and verify season matches.
-    
+    Test a single TikTok URL and verify episode matches.
+
     Returns:
         dict with test results: {
-            'season': expected_season,
+            'expected_episode': expected episode ID,
             'url': url,
             'success': bool,
-            'episode_id': str or None,
-            'detected_season': int or None,
+            'detected_episode': str or None,
             'match': bool,
             'time': float,
+            'confidence': int or None,
             'error': str or None
         }
     """
     start_time = time.time()
-    
+
     try:
         # Make API request
         form_data = {'url': url}
@@ -85,70 +81,67 @@ def test_season_match(season: int, url: str) -> Dict:
             data=form_data,
             timeout=TIMEOUT
         )
-        
+
         elapsed = time.time() - start_time
-        
+
         if response.status_code != 200:
             return {
-                'season': season,
+                'expected_episode': expected_episode,
                 'url': url,
                 'success': False,
-                'episode_id': None,
-                'detected_season': None,
+                'detected_episode': None,
                 'match': False,
                 'time': elapsed,
                 'error': f"HTTP {response.status_code}: {response.text[:100]}"
             }
-        
+
         result = response.json()
-        
+
         if not result.get('match_found'):
             return {
-                'season': season,
+                'expected_episode': expected_episode,
                 'url': url,
                 'success': True,
-                'episode_id': None,
-                'detected_season': None,
+                'detected_episode': None,
                 'match': False,
                 'time': elapsed,
+                'confidence': None,
                 'error': 'No match found'
             }
-        
-        episode_id = result.get('episode')
-        detected_season = extract_season_from_episode_id(episode_id) if episode_id else None
-        
+
+        detected_episode = result.get('episode')
+
         return {
-            'season': season,
+            'expected_episode': expected_episode,
             'url': url,
             'success': True,
-            'episode_id': episode_id,
-            'detected_season': detected_season,
-            'match': detected_season == season,
+            'detected_episode': detected_episode,
+            'match': detected_episode == expected_episode,
             'time': elapsed,
             'confidence': result.get('confidence'),
             'error': None
         }
-        
+
     except requests.exceptions.Timeout:
         return {
-            'season': season,
+            'expected_episode': expected_episode,
             'url': url,
             'success': False,
-            'episode_id': None,
-            'detected_season': None,
+            'detected_episode': None,
             'match': False,
             'time': time.time() - start_time,
+            'confidence': None,
             'error': 'Request timeout'
         }
     except Exception as e:
         return {
-            'season': season,
+            'expected_episode': expected_episode,
             'url': url,
             'success': False,
-            'episode_id': None,
-            'detected_season': None,
+            'detected_episode': None,
             'match': False,
             'time': time.time() - start_time,
+            'confidence': None,
             'error': str(e)
         }
 
@@ -156,41 +149,41 @@ def test_season_match(season: int, url: str) -> Dict:
 def run_all_tests():
     """Run all test cases and print results."""
     print("=" * 80)
-    print("Season Matching Test Suite")
+    print("Episode Matching Test Suite")
     print("=" * 80)
     print(f"API URL: {API_URL}")
-    print(f"Test cases: {len(TEST_CASES)} seasons")
+    print(f"Test cases: {len(TEST_CASES)} episodes")
     print()
-    
+
     results = []
     total_start = time.time()
-    
-    for season in sorted(TEST_CASES.keys()):
-        url = TEST_CASES[season]
-        print(f"Testing Season {season:2d}...", end=" ", flush=True)
-        
-        result = test_season_match(season, url)
+
+    for expected_episode in sorted(TEST_CASES.keys()):
+        url = TEST_CASES[expected_episode]
+        print(f"Testing {expected_episode}...", end=" ", flush=True)
+
+        result = test_episode_match(expected_episode, url)
         results.append(result)
-        
+
         if result['success'] and result['match']:
-            print(f"✅ PASS (Episode: {result['episode_id']}, Time: {result['time']:.1f}s, Confidence: {result.get('confidence', 'N/A')}%)")
+            print(f"✅ PASS (Time: {result['time']:.1f}s, Confidence: {result.get('confidence', 'N/A')}%)")
         elif result['success']:
-            print(f"❌ FAIL - Expected S{season:02d}, got {result['episode_id'] or 'None'} (Time: {result['time']:.1f}s)")
+            print(f"❌ FAIL - Expected {expected_episode}, got {result['detected_episode'] or 'None'} (Time: {result['time']:.1f}s)")
         else:
             print(f"❌ ERROR - {result['error']} (Time: {result['time']:.1f}s)")
-    
+
     total_time = time.time() - total_start
-    
+
     # Summary
     print()
     print("=" * 80)
     print("Summary")
     print("=" * 80)
-    
+
     passed = sum(1 for r in results if r['success'] and r['match'])
     failed = sum(1 for r in results if r['success'] and not r['match'])
     errors = sum(1 for r in results if not r['success'])
-    
+
     print(f"Total tests: {len(results)}")
     print(f"✅ Passed: {passed}")
     print(f"❌ Failed: {failed}")
@@ -198,15 +191,15 @@ def run_all_tests():
     print(f"⏱️  Total time: {total_time:.1f}s")
     print(f"⏱️  Average time per test: {total_time/len(results):.1f}s")
     print()
-    
+
     # Failed tests details
     if failed > 0 or errors > 0:
         print("Failed/Error Details:")
         for r in results:
             if not r['match'] or not r['success']:
-                print(f"  Season {r['season']:2d}: Expected S{r['season']:02d}, got {r['episode_id'] or 'None'} - {r['error'] or 'Season mismatch'}")
+                print(f"  {r['expected_episode']}: Expected {r['expected_episode']}, got {r['detected_episode'] or 'None'} - {r['error'] or 'Episode mismatch'}")
         print()
-    
+
     # Exit code
     if failed > 0 or errors > 0:
         sys.exit(1)
@@ -216,12 +209,12 @@ def run_all_tests():
 
 # Pytest-compatible test functions (only if pytest is available)
 if pytest:
-    @pytest.mark.parametrize("season,url", [(s, TEST_CASES[s]) for s in sorted(TEST_CASES.keys())])
-    def test_season_matching(season, url):
-        """Pytest test function for individual season matching."""
-        result = test_season_match(season, url)
+    @pytest.mark.parametrize("expected_episode,url", [(ep, TEST_CASES[ep]) for ep in sorted(TEST_CASES.keys())])
+    def test_episode_matching(expected_episode, url):
+        """Pytest test function for individual episode matching."""
+        result = test_episode_match(expected_episode, url)
         assert result['success'], f"Request failed: {result.get('error')}"
-        assert result['match'], f"Season mismatch: Expected S{season:02d}, got {result.get('episode_id', 'None')}"
+        assert result['match'], f"Episode mismatch: Expected {expected_episode}, got {result.get('detected_episode', 'None')}"
 
 
 if __name__ == "__main__":
