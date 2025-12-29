@@ -278,11 +278,13 @@ class AudioFingerprinter:
                     hashes.append((h, anchor_time))
         return hashes
 
-    def _match_season(self, season: int, query_prints: List[Tuple[str, float]]) -> Dict[str, List[float]]:
+    def _match_season(self, season: int, query_prints: List[Tuple[str, float]]) -> Dict[str, List[Tuple[float, float]]]:
         """
         Match query hashes against a single season's database.
         
-        OPTIMIZATION B+3: Filter common hashes + cap per-hash contribution.
+        Returns: Dict[episode_id, List[Tuple[offset, weight]]]
+        - offset: time offset in seconds
+        - weight: IDF weight (1.0 if IDF disabled, or calculated weight)
         """
         season_matches = defaultdict(list)
         hash_seen_per_episode = defaultdict(set)  # Track which hashes voted for each episode
@@ -298,9 +300,10 @@ class AudioFingerprinter:
             if h in self.common_hash_stoplist:
                 continue
             
-            # OPTIMIZATION 3: Query-time DF filtering
+            # OPTIMIZATION 3: Query-time DF filtering + weight calculation
+            weight = 1.0
             if self.use_idf_weighting and h in self.hash_df_cache:
-                _, should_skip = self._calculate_idf_weight(h)
+                weight, should_skip = self._calculate_idf_weight(h)
                 if should_skip:
                     continue
             
@@ -322,7 +325,7 @@ class AudioFingerprinter:
                     hash_seen_per_episode[ep_id].add(h)
                     t_db = x['offset']
                     offset = t_db - t_q
-                    season_matches[ep_id].append(offset)
+                    season_matches[ep_id].append((offset, weight))
 
         return season_matches
 
@@ -408,7 +411,6 @@ class AudioFingerprinter:
         # Match each window independently
         window_results = []
         all_matches = defaultdict(list)
-        all_weights = defaultdict(list) if self.use_idf_weighting else None
         
         for idx, (window_audio, window_offset) in enumerate(windows):
             print(f"\n   Window {idx+1}/{len(windows)} (offset: {window_offset:.1f}s):")
@@ -439,7 +441,6 @@ class AudioFingerprinter:
             # Search
             print(f"      Searching {len(filtered_hashes)} hashes...")
             window_matches = defaultdict(list)
-            window_weights = defaultdict(list) if self.use_idf_weighting else None
             
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
                 future_to_season = {
@@ -450,26 +451,15 @@ class AudioFingerprinter:
                 for future in as_completed(future_to_season):
                     try:
                         season_matches = future.result()
-                        for ep_id, offsets in season_matches.items():
-                            window_matches[ep_id].extend(offsets)
-                            all_matches[ep_id].extend(offsets)
-                            
-                            # Track IDF weights
-                            if self.use_idf_weighting and window_weights is not None:
-                                weights = [self._calculate_idf_weight(h) for h, _ in filtered_hashes]
-                                window_weights[ep_id].extend(weights[:len(offsets)])
-                                if all_weights is not None:
-                                    all_weights[ep_id].extend(weights[:len(offsets)])
+                        for ep_id, weighted_offsets in season_matches.items():
+                            window_matches[ep_id].extend(weighted_offsets)
+                            all_matches[ep_id].extend(weighted_offsets)
                     except Exception as e:
                         pass
             
             # Find best in this window
             if window_matches:
-                best_ep, best_off, best_cnt, candidates = self._find_best_alignment(
-                    window_matches, 
-                    use_weights=self.use_idf_weighting,
-                    weights_dict=window_weights
-                )
+                best_ep, best_off, best_cnt, candidates = self._find_best_alignment(window_matches)
                 
                 sharpness = candidates[0]['sharpness'] if candidates else 0.0
                 print(f"      Best: {best_ep} ({best_cnt:.1f} aligned, sharpness: {sharpness:.2f})")
@@ -493,11 +483,7 @@ class AudioFingerprinter:
         winner, num_wins = episode_votes.most_common(1)[0]
         
         # Final alignment using all matches
-        best_episode, best_offset, best_count, candidates = self._find_best_alignment(
-            all_matches,
-            use_weights=self.use_idf_weighting,
-            weights_dict=all_weights
-        )
+        best_episode, best_offset, best_count, candidates = self._find_best_alignment(all_matches)
         
         elapsed = time.time() - start_time
         
@@ -610,7 +596,6 @@ class AudioFingerprinter:
             durations.append(duration)
         
         all_matches = defaultdict(list)
-        all_weights = defaultdict(list) if self.use_idf_weighting else None
         total_fingerprints_generated = 0
         
         for step_idx, step_duration in enumerate(durations):
@@ -652,7 +637,6 @@ class AudioFingerprinter:
             lookup_start = time.time()
             
             step_matches = defaultdict(list)
-            step_weights = defaultdict(list) if self.use_idf_weighting else None
             
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
                 future_to_season = {
@@ -663,16 +647,9 @@ class AudioFingerprinter:
                 for future in as_completed(future_to_season):
                     try:
                         season_matches = future.result()
-                        for ep_id, offsets in season_matches.items():
-                            all_matches[ep_id].extend(offsets)
-                            step_matches[ep_id].extend(offsets)
-                            
-                            if self.use_idf_weighting:
-                                weights = [self._calculate_idf_weight(h) for h, _ in filtered_hashes]
-                                if step_weights is not None:
-                                    step_weights[ep_id].extend(weights[:len(offsets)])
-                                if all_weights is not None:
-                                    all_weights[ep_id].extend(weights[:len(offsets)])
+                        for ep_id, weighted_offsets in season_matches.items():
+                            all_matches[ep_id].extend(weighted_offsets)
+                            step_matches[ep_id].extend(weighted_offsets)
                     except Exception as e:
                         pass  # Silent fail for individual seasons
             
@@ -681,11 +658,7 @@ class AudioFingerprinter:
             
             # Check if we have a confident match
             if step_matches:
-                best_ep, best_off, best_cnt, candidates = self._find_best_alignment(
-                    step_matches,
-                    use_weights=self.use_idf_weighting,
-                    weights_dict=step_weights
-                )
+                best_ep, best_off, best_cnt, candidates = self._find_best_alignment(step_matches)
                 
                 sharpness = candidates[0].get('sharpness', 0.0) if candidates else 0.0
                 print(f"   🎯 Best match: {best_ep} ({best_cnt:.1f} aligned, sharpness: {sharpness:.2f})")
@@ -738,11 +711,7 @@ class AudioFingerprinter:
         print(f"\n⚠️  No confident match after all incremental steps")
         
         if all_matches:
-            best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(
-                all_matches,
-                use_weights=self.use_idf_weighting,
-                weights_dict=all_weights
-            )
+            best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(all_matches)
             elapsed = time.time() - start_time
             
             print(f"⏱️  Total matching took {elapsed:.2f}s")
@@ -948,59 +917,65 @@ class AudioFingerprinter:
         
         print(f"   ✓ Cached {len(self.hash_df_cache):,} hash document frequencies")
     
-    def _find_best_alignment(self, matches_dict: Dict[str, List[float]], use_weights: bool = False, weights_dict: Dict[str, List[float]] = None) -> Tuple[str, float, int, List[Dict]]:
+    def _find_best_alignment(self, matches_dict: Dict[str, List[Tuple[float, float]]]) -> Tuple[str, float, float, List[Dict]]:
         """
-        Find best alignment using binned voting with optional IDF weighting.
+        Find best alignment using binned voting with IDF weighting.
+        
+        Args:
+            matches_dict: Dict[episode_id, List[Tuple[offset, weight]]]
         
         Returns best match and top 10 candidates with sharpness scores.
         """
-        best_ep, best_count, best_offset = None, 0, 0.0
+        best_ep, best_score, best_offset = None, 0.0, 0.0
         candidates = []
         
         # Increase candidate pool to 200 to avoid missing signal buried in noise
         sorted_candidates = sorted(matches_dict.items(), key=lambda x: len(x[1]), reverse=True)[:200]
-        for ep_id, offsets in sorted_candidates:
-            if not offsets:
+        for ep_id, items in sorted_candidates:
+            if not items:
                 continue
             
-            # Calculate aligned score (with optional IDF weighting)
-            if use_weights and weights_dict and ep_id in weights_dict:
-                # Weighted alignment
-                offset_weights = defaultdict(float)
-                for offset, weight in zip(offsets, weights_dict[ep_id]):
-                    binned_offset = round(offset * 2) / 2
-                    offset_weights[binned_offset] += weight
-                
-                if not offset_weights:
-                    continue
-                    
-                mode_offset = max(offset_weights.items(), key=lambda x: x[1])[0]
-                aligned_score = offset_weights[mode_offset]
-            else:
-                # Standard binned voting
-                binned = [round(o * 2) / 2 for o in offsets]
-                counts = Counter(binned)
-                if not counts:
-                    continue
-                mode_offset, aligned_score = counts.most_common(1)[0]
+            # Bin offsets by weighted scores
+            offset_weights = defaultdict(float)
+            offsets_only = []
             
-            # Calculate peak sharpness
-            sharpness = self._calculate_peak_sharpness(offsets)
+            for item in items:
+                # Handle both (offset, weight) tuples and legacy float offsets
+                if isinstance(item, tuple):
+                    offset, weight = item
+                    offsets_only.append(offset)
+                else:
+                    # Legacy: just offset, weight = 1.0
+                    offset = item
+                    weight = 1.0
+                    offsets_only.append(offset)
+                
+                binned_offset = round(offset * 2) / 2
+                offset_weights[binned_offset] += float(weight)
+            
+            if not offset_weights:
+                continue
+            
+            # Find mode offset (highest weighted bin)
+            mode_offset, aligned_score = max(offset_weights.items(), key=lambda x: x[1])
+            
+            # Calculate peak sharpness (on raw offsets, not weighted)
+            sharpness = self._calculate_peak_sharpness(offsets_only)
             
             candidates.append({
                 "episode_id": ep_id,
                 "aligned_matches": aligned_score,
-                "raw_matches": len(offsets),
+                "raw_matches": len(items),
                 "offset": mode_offset,
                 "sharpness": sharpness
             })
             
-            if aligned_score > best_count:
-                best_count, best_ep, best_offset = aligned_score, ep_id, mode_offset
+            if aligned_score > best_score:
+                best_score, best_ep, best_offset = aligned_score, ep_id, mode_offset
         
         # Sort candidates by aligned matches
         candidates.sort(key=lambda x: x['aligned_matches'], reverse=True)
-        return best_ep, best_offset, best_count, candidates[:10]
+        return best_ep, best_offset, best_score, candidates[:10]
 
     def match_clip(self, file_path: str) -> Dict[str, Any]:
         try:
