@@ -74,10 +74,10 @@ class AudioFingerprinter:
         self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
         self.common_hash_stoplist: set = set()
         
-        # Query-time DF-based stoplist (OPTIMIZATION 3) - tightened to reduce Season 11 pollution
-        self.df_hard_threshold = 50   # Drop hashes appearing in ≥50 episodes (stricter)
-        self.df_soft_threshold = 30   # Downweight hashes appearing in 30-49 episodes (stricter)
-        self.soft_downweight = 0.4    # Weight multiplier for soft threshold (stronger downweight)
+        # Query-time DF-based stoplist (OPTIMIZATION 3) - Iteration 15 baseline
+        self.df_hard_threshold = 60   # Drop hashes appearing in ≥60 episodes
+        self.df_soft_threshold = 35   # Downweight hashes appearing in 35-59 episodes
+        self.soft_downweight = 0.6    # Weight multiplier for soft threshold
 
         # Cap per-hash contribution per candidate (prevents spam)
         self.max_hash_votes_per_candidate = 2  # Allow 2 votes per hash (balanced)
