@@ -51,9 +51,9 @@ class AudioFingerprinter:
         # Number of parallel workers for season matching
         self.num_workers = int(os.getenv('MATCH_WORKERS', '16'))
         
-        # OPTIMIZATION A: Incremental fingerprinting config - DISABLED for speed
-        self.incremental_durations = []  # Disable incremental, use full clip only
-        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '10'))  # Lowered for weaker matches
+        # OPTIMIZATION A: Incremental fingerprinting config - SINGLE STAGE for speed
+        self.incremental_durations = [8.0]  # Single 8s stage for balance of speed/accuracy
+        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '8'))  # Low threshold for early exit
         
         # Multi-window sampling config - DISABLED for short TikTok clips
         self.use_multi_window = False  # Use full clip instead of sampling windows

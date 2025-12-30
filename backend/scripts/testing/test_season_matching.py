@@ -22,21 +22,44 @@ import time
 import requests
 from typing import Dict, Optional
 
-# Test cases: season_number -> TikTok URL
-TEST_CASES = {
-    1: "https://www.tiktok.com/@tik_tok_cliped/video/7209768566252490026?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    2: "https://www.tiktok.com/@theamericansouthguyshow/video/7187933650447584517?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    3: "https://www.tiktok.com/@theamericansouthguyshow/video/7189384225131384069?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    4: "https://www.tiktok.com/@funnyclips6377/video/7374095866186976554?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    5: "https://www.tiktok.com/@theamericansouthguyshow/video/7194193182823910661?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    6: "https://www.tiktok.com/@south.park.geek/video/7268318264298622240?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    7: "https://www.tiktok.com/@shroombro/video/7316089360074476842?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    8: "https://www.tiktok.com/@south.park.geek/video/7358162957416533281?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    9: "https://www.tiktok.com/@southpark_fullepisodes/video/7579346961749331222?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    10: "https://www.tiktok.com/@southpark935/video/7117938751346691334?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    11: "https://www.tiktok.com/@southparkvideos013/video/7216017114799377706?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-    12: "https://www.tiktok.com/@southparknator_/video/7178255122722671918?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111",
-}
+# Test cases: list of (season_number, TikTok URL) tuples
+# Multiple URLs per season are supported
+TEST_CASES = [
+    # Season 1
+    (1, "https://www.tiktok.com/@tik_tok_cliped/video/7209768566252490026?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 2
+    (2, "https://www.tiktok.com/@theamericansouthguyshow/video/7187933650447584517?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 3
+    (3, "https://www.tiktok.com/@theamericansouthguyshow/video/7189384225131384069?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 4
+    (4, "https://www.tiktok.com/@funnyclips6377/video/7374095866186976554?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 5
+    (5, "https://www.tiktok.com/@theamericansouthguyshow/video/7194193182823910661?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 6
+    (6, "https://www.tiktok.com/@south.park.geek/video/7268318264298622240?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 7
+    (7, "https://www.tiktok.com/@shroombro/video/7316089360074476842?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 8 - Multiple test cases
+    (8, "https://www.tiktok.com/@randomtvclips63/video/7186824962966129926?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (8, "https://www.tiktok.com/@randomtvclips63/video/7265267618444053792?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (8, "https://www.tiktok.com/@randomtvclips63/video/7209791745511492870?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (8, "https://www.tiktok.com/@juniperberii/video/7209319779239267590?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (8, "https://www.tiktok.com/@ssouthparkclipz/video/7206219254130248966?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 9
+    (9, "https://www.tiktok.com/@southpark_fullepisodes/video/7579346961749331222?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 10
+    (10, "https://www.tiktok.com/@southpark935/video/7117938751346691334?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 11
+    (11, "https://www.tiktok.com/@southparkvideos013/video/7216017114799377706?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 12
+    (12, "https://www.tiktok.com/@southparknator_/video/7178255122722671918?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 14 - Multiple test cases
+    (14, "https://www.tiktok.com/@cartmansbedroom/video/7191866921539685678?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (14, "https://www.tiktok.com/@spclips._/video/7531687511618260238?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 18 - Multiple test cases
+    (18, "https://www.tiktok.com/@spclips._/video/7532211509049478413?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (18, "https://www.tiktok.com/@randomtvclips63/video/7216847351804185861?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+]
 
 # API configuration
 API_URL = os.getenv("API_URL", "https://citywok-production.up.railway.app")
@@ -164,14 +187,18 @@ def run_all_tests():
 
     results = []
     total_start = time.time()
-
-    for season in sorted(TEST_CASES.keys()):
-        url = TEST_CASES[season]
-        print(f"Testing Season {season:2d}...", end=" ", flush=True)
-
+    
+    # Sort test cases by season number, then by URL for consistency
+    sorted_tests = sorted(TEST_CASES, key=lambda x: (x[0], x[1]))
+    
+    for season, url in sorted_tests:
+        # Extract short identifier from URL for display
+        url_id = url.split('/video/')[1].split('?')[0] if '/video/' in url else url[-20:]
+        print(f"Testing Season {season:2d} ({url_id[:12]}...)...", end=" ", flush=True)
+        
         result = test_season_match(season, url)
         results.append(result)
-
+        
         if result['success'] and result['match']:
             print(f"✅ PASS (Episode: {result['episode_id']}, Time: {result['time']:.1f}s, Confidence: {result.get('confidence', 'N/A')}%)")
         elif result['success']:
@@ -216,7 +243,7 @@ def run_all_tests():
 
 # Pytest-compatible test functions (only if pytest is available)
 if pytest:
-    @pytest.mark.parametrize("season,url", [(s, TEST_CASES[s]) for s in sorted(TEST_CASES.keys())])
+    @pytest.mark.parametrize("season,url", TEST_CASES)
     def test_season_matching(season, url):
         """Pytest test function for individual season matching."""
         result = test_season_match(season, url)
