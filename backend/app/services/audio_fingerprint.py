@@ -55,8 +55,8 @@ class AudioFingerprinter:
         self.incremental_durations = [3.0, 5.0, 8.0, 10.0]  # seconds
         self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '15'))  # Lowered to allow weaker matches
         
-        # Multi-window sampling config
-        self.use_multi_window = True
+        # Multi-window sampling config - DISABLED for short TikTok clips
+        self.use_multi_window = False  # Use full clip instead of sampling windows
         self.num_windows = 2  # Sample 2 windows
         self.min_window_agreement = 1  # Require 1/2 windows (permissive)
 
