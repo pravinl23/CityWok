@@ -61,9 +61,9 @@ class AudioFingerprinter:
         self.min_window_agreement = 1  # Require 1/2 windows (permissive)
 
         # Margin/confidence requirements for early exit
-        self.min_confidence_ratio = 1.15   # top1/top2 aligned ratio (moderate)
-        self.min_confidence_margin = 3   # top1 - top2 aligned difference (moderate)
-        self.min_peak_sharpness = 1.05     # peak/second_peak ratio (moderate)
+        self.min_confidence_ratio = 1.1   # top1/top2 aligned ratio (relaxed)
+        self.min_confidence_margin = 2   # top1 - top2 aligned difference (relaxed)
+        self.min_peak_sharpness = 1.03     # peak/second_peak ratio (relaxed)
 
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
