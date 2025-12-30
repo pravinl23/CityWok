@@ -53,17 +53,17 @@ class AudioFingerprinter:
         
         # OPTIMIZATION A: Incremental fingerprinting config
         self.incremental_durations = [3.0, 5.0, 8.0, 10.0]  # seconds
-        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '20'))
+        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '15'))  # Lowered to allow weaker matches
         
         # Multi-window sampling config
         self.use_multi_window = True
         self.num_windows = 2  # Sample 2 windows
         self.min_window_agreement = 1  # Require 1/2 windows (permissive)
 
-        # Margin/confidence requirements for early exit
-        self.min_confidence_ratio = 1.1   # top1/top2 aligned ratio (relaxed)
-        self.min_confidence_margin = 2   # top1 - top2 aligned difference (relaxed)
-        self.min_peak_sharpness = 1.03     # peak/second_peak ratio (relaxed)
+        # Margin/confidence requirements for early exit (very permissive to maximize matches)
+        self.min_confidence_ratio = 1.05   # top1/top2 aligned ratio (very permissive)
+        self.min_confidence_margin = 1   # top1 - top2 aligned difference (very permissive)
+        self.min_peak_sharpness = 1.01     # peak/second_peak ratio (very permissive)
 
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
