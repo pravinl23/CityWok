@@ -82,8 +82,8 @@ class AudioFingerprinter:
         # Cap per-hash contribution per candidate (prevents spam)
         self.max_hash_votes_per_candidate = 2  # Allow 2 votes per hash (balanced)
 
-        # IDF weighting (for down-weighting common hashes) - RE-ENABLED for accuracy
-        self.use_idf_weighting = True
+        # IDF weighting (for down-weighting common hashes) - DISABLED (too aggressive for short clips)
+        self.use_idf_weighting = False
         self.hash_df_cache = {}  # Cache document frequencies
         
         # Check for lazy loading flag (default: False for backward compatibility)
