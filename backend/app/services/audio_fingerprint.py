@@ -60,10 +60,10 @@ class AudioFingerprinter:
         self.num_windows = 2  # Sample 2 windows
         self.min_window_agreement = 1  # Require 1/2 windows (permissive)
 
-        # Margin/confidence requirements for early exit (very permissive to maximize matches)
-        self.min_confidence_ratio = 1.05   # top1/top2 aligned ratio (very permissive)
-        self.min_confidence_margin = 1   # top1 - top2 aligned difference (very permissive)
-        self.min_peak_sharpness = 1.01     # peak/second_peak ratio (very permissive)
+        # Margin/confidence requirements for early exit (balanced for accuracy)
+        self.min_confidence_ratio = 1.2   # top1/top2 aligned ratio (moderate - reject close ties)
+        self.min_confidence_margin = 5   # top1 - top2 aligned difference (moderate)
+        self.min_peak_sharpness = 1.1     # peak/second_peak ratio (moderate)
 
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
