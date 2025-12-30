@@ -60,10 +60,10 @@ class AudioFingerprinter:
         self.num_windows = 2  # Sample 2 windows
         self.min_window_agreement = 1  # Require 1/2 windows (permissive)
 
-        # Margin/confidence requirements for early exit (further relaxed for recall)
-        self.min_confidence_ratio = 1.05   # top1/top2 aligned ratio (very relaxed)
-        self.min_confidence_margin = 1   # top1 - top2 aligned difference (very relaxed)
-        self.min_peak_sharpness = 1.02     # peak/second_peak ratio (very relaxed)
+        # Margin/confidence requirements for early exit (relaxed for recall)
+        self.min_confidence_ratio = 1.1   # top1/top2 aligned ratio (relaxed)
+        self.min_confidence_margin = 2   # top1 - top2 aligned difference (relaxed)
+        self.min_peak_sharpness = 1.05     # peak/second_peak ratio (relaxed)
 
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
@@ -74,10 +74,10 @@ class AudioFingerprinter:
         self.max_posting_list_size = int(os.getenv('MAX_POSTING_LIST_SIZE', '200'))
         self.common_hash_stoplist: set = set()
         
-        # Query-time DF-based stoplist (OPTIMIZATION 3)
-        self.df_hard_threshold = 60   # Drop hashes appearing in ≥60 episodes (permissive)
-        self.df_soft_threshold = 35   # Downweight hashes appearing in 35-59 episodes (permissive)
-        self.soft_downweight = 0.6    # Weight multiplier for soft threshold (permissive)
+        # Query-time DF-based stoplist (OPTIMIZATION 3) - tightened to reduce Season 11 pollution
+        self.df_hard_threshold = 50   # Drop hashes appearing in ≥50 episodes (stricter)
+        self.df_soft_threshold = 30   # Downweight hashes appearing in 30-49 episodes (stricter)
+        self.soft_downweight = 0.4    # Weight multiplier for soft threshold (stronger downweight)
 
         # Cap per-hash contribution per candidate (prevents spam)
         self.max_hash_votes_per_candidate = 2  # Allow 2 votes per hash (balanced)
