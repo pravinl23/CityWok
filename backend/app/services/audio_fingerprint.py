@@ -51,19 +51,19 @@ class AudioFingerprinter:
         # Number of parallel workers for season matching
         self.num_workers = int(os.getenv('MATCH_WORKERS', '16'))
         
-        # OPTIMIZATION A: Incremental fingerprinting config (reduced for speed)
-        self.incremental_durations = [5.0, 10.0]  # Only 2 stages for speed
-        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '12'))  # Lowered for weaker matches
+        # OPTIMIZATION A: Incremental fingerprinting config - DISABLED for speed
+        self.incremental_durations = []  # Disable incremental, use full clip only
+        self.min_aligned_early_exit = int(os.getenv('MIN_ALIGNED_EARLY_EXIT', '10'))  # Lowered for weaker matches
         
         # Multi-window sampling config - DISABLED for short TikTok clips
         self.use_multi_window = False  # Use full clip instead of sampling windows
         self.num_windows = 2  # Sample 2 windows
         self.min_window_agreement = 1  # Require 1/2 windows (permissive)
 
-        # Margin/confidence requirements for early exit (balanced for accuracy)
-        self.min_confidence_ratio = 1.15   # top1/top2 aligned ratio (slightly relaxed)
-        self.min_confidence_margin = 3   # top1 - top2 aligned difference (slightly relaxed)
-        self.min_peak_sharpness = 1.08     # peak/second_peak ratio (slightly relaxed)
+        # Margin/confidence requirements for early exit (relaxed for recall)
+        self.min_confidence_ratio = 1.1   # top1/top2 aligned ratio (relaxed)
+        self.min_confidence_margin = 2   # top1 - top2 aligned difference (relaxed)
+        self.min_peak_sharpness = 1.05     # peak/second_peak ratio (relaxed)
 
         # Adaptive sharpness: if ratio/margin are huge, allow lower sharpness
         self.adaptive_sharpness = True
