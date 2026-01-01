@@ -56,9 +56,39 @@ TEST_CASES = [
     # Season 14 - Multiple test cases
     (14, "https://www.tiktok.com/@cartmansbedroom/video/7191866921539685678?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
     (14, "https://www.tiktok.com/@spclips._/video/7531687511618260238?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 15 - Multiple test cases
+    (15, "https://www.tiktok.com/@southparkclips7183/video/7349630527990811906?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (15, "https://www.tiktok.com/@flawedrealityyt/video/7243968033973177642?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (15, "https://www.tiktok.com/@ashethecrash/video/7233604932404809002?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (15, "https://www.tiktok.com/@flawedrealityyt/video/7223937358008159530?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (15, "https://www.tiktok.com/@clipsofsouth/video/7220758175908203781?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 16 - Multiple test cases
+    (16, "https://www.tiktok.com/@thecartmanlover/video/7202289342306454826?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (16, "https://www.tiktok.com/@brrrberrysh0rty2/video/7201186627471904046?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (16, "https://www.tiktok.com/@followformore666/video/7201712113344318766?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (16, "https://www.tiktok.com/@southparkfunnyclips3/video/7192311517889580334?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (16, "https://www.tiktok.com/@southparkfunnyclips3/video/7192375296304172330?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 17 - Multiple test cases
+    (17, "https://www.tiktok.com/@tv_shows_for_tiktok/video/7229125680053898542?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (17, "https://www.tiktok.com/@spamjoecool/video/7529331467130883359?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (17, "https://www.tiktok.com/@southparkepisodes_/video/7199431355393051950?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (17, "https://www.tiktok.com/@fgsp_movies/video/7257032582179753262?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (17, "https://www.tiktok.com/@southparkclips85/video/7178924663916055854?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
     # Season 18 - Multiple test cases
     (18, "https://www.tiktok.com/@spclips._/video/7532211509049478413?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
     (18, "https://www.tiktok.com/@randomtvclips63/video/7216847351804185861?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (18, "https://www.tiktok.com/@southparkclips450/video/7535450188144528662?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (18, "https://www.tiktok.com/@cartman_x_heidi_official/video/7186039862758313258?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (18, "https://www.tiktok.com/@jussumclipz4u/video/7185004032623217963?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 19 - Multiple test cases
+    (19, "https://www.tiktok.com/@its.just.m3.bruhh/video/7553774238046375223?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (19, "https://www.tiktok.com/@spamjoecool/video/7528415868414381342?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (19, "https://www.tiktok.com/@flawedrealityyt/video/7227135393789922606?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    # Season 20 - Multiple test cases
+    (20, "https://www.tiktok.com/@southparkclipz01/video/7186738651391479045?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (20, "https://www.tiktok.com/@animationcontentenjoyer/video/7576418097700097302?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (20, "https://www.tiktok.com/@southparkclipz01/video/7186738651391462661?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
+    (20, "https://www.tiktok.com/@tiktokspot6942/video/7219404724196478251?is_from_webapp=1&sender_device=pc&web_id=7493733278417389111"),
 ]
 
 # API configuration
