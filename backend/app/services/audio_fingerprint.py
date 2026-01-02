@@ -97,14 +97,8 @@ class AudioFingerprinter:
         # stoplist_path = os.path.join(self.data_dir, 'common_hash_stoplist_pkl.txt')
         # if os.path.exists(stoplist_path):
         #     self._load_stoplist(stoplist_path)
-        #     print(f"   ✓ Loaded {len(self.common_hash_stoplist):,} common hashes (stoplist)")
-        print(f"   ⚠️  Common hash stoplist DISABLED for better TikTok matching")
         
-        if self.lazy_load:
-            print(f"📦 Lazy loading mode: Skipping initial database load (will load on-demand)")
-            print(f"   Found {len(self.existing_dbs)} existing databases")
-        else:
-            print(f"📦 Eager loading all {len(self.existing_dbs)} databases into memory (optimized)...")
+        if not self.lazy_load:
             self._load_all_databases()
 
     def _scan_databases(self):
@@ -130,7 +124,6 @@ class AudioFingerprinter:
             return False
         
         try:
-            print(f"📂 Loading {db_file}...")
             dtype = [('ep_idx', 'u2'), ('offset', 'f4')]
 
             with open(db_path, 'rb') as f:
@@ -157,12 +150,9 @@ class AudioFingerprinter:
                 self.season_fingerprints[season][h] = new_arr
 
             self.loaded_seasons.add(season)
-            season_size = sum(a.nbytes for a in self.season_fingerprints[season].values()) / 1024 / 1024
-            print(f"   ✓ Loaded {db_file} ({len(self.season_episodes[season])} episodes, {season_size:.1f}MB)")
             del data  # Explicitly free memory
             return True
         except Exception as e:
-            print(f"   ❌ Error loading {db_file}: {e}")
             return False
     
     def _load_all_databases(self):
@@ -179,13 +169,6 @@ class AudioFingerprinter:
         elapsed = time.time() - start_time
         if self.season_fingerprints:
             total_eps = sum(len(eps) for eps in self.season_episodes.values())
-            total_size = sum(
-                sum(a.nbytes for a in fps.values())
-                for fps in self.season_fingerprints.values()
-            ) / 1024 / 1024
-            print(f"✅ Loaded {len(self.loaded_seasons)} seasons ({total_eps} episodes) in {elapsed:.1f}s")
-            print(f"📊 Total Data Size: {total_size:.1f}MB | {self.num_workers} parallel workers")
-            
             # Build IDF cache if enabled
             if self.use_idf_weighting:
                 self._build_hash_df_cache()
@@ -196,7 +179,6 @@ class AudioFingerprinter:
             with open(stoplist_path, 'r') as f:
                 self.common_hash_stoplist = {line.strip() for line in f if line.strip()}
         except Exception as e:
-            print(f"   ⚠️  Error loading stoplist: {e}")
             self.common_hash_stoplist = set()
     
     def build_stoplist(self, top_percent: float = 0.05, min_occurrences: int = 500):
@@ -207,7 +189,6 @@ class AudioFingerprinter:
             top_percent: Top X% of hashes by frequency to include
             min_occurrences: Minimum number of occurrences to be considered common
         """
-        print(f"🔧 Building common hash stoplist (top {top_percent*100}%, min {min_occurrences} occurrences)...")
         
         # Ensure all databases are loaded
         if len(self.loaded_seasons) < len(self.existing_dbs):
@@ -217,7 +198,6 @@ class AudioFingerprinter:
         
         # Count hash frequencies across all seasons
         for season, fingerprints in self.season_fingerprints.items():
-            print(f"   Scanning season {season:02d}...")
             for h, arr in fingerprints.items():
                 hash_counts[h] += len(arr)
         
@@ -232,17 +212,11 @@ class AudioFingerprinter:
         # Also filter by minimum occurrences
         common_hashes = {h for h, count in top_hashes if count >= min_occurrences}
         
-        print(f"   ✓ Identified {len(common_hashes):,} common hashes")
-        if sorted_hashes:
-            print(f"   Example: hash '{sorted_hashes[0][0][:8]}...' appears {sorted_hashes[0][1]:,} times")
-        
         # Save to disk
         stoplist_path = os.path.join(self.data_dir, 'common_hash_stoplist_pkl.txt')
         with open(stoplist_path, 'w') as f:
             for h in common_hashes:
                 f.write(f"{h}\n")
-        
-        print(f"   ✓ Saved stoplist to {stoplist_path}")
         
         # Load into memory
         self.common_hash_stoplist = common_hashes
@@ -341,7 +315,6 @@ class AudioFingerprinter:
         """
         # Lazy load all databases if in lazy mode and not yet loaded
         if self.lazy_load and len(self.loaded_seasons) < len(self.existing_dbs):
-            print("📦 Lazy loading databases for matching...")
             self._load_all_databases()
 
         start_time = time.time()
@@ -389,10 +362,8 @@ class AudioFingerprinter:
         - IDF weighting for common hash down-weighting
         - Confidence messaging for uncertain matches
         """
-        print("🔍 Using OPTIMIZED INCREMENTAL matching (A+B+C+Multi-Window)")
         
         duration = len(audio_array) / sr
-        print(f"   Audio duration: {duration:.1f}s")
         
         # Use multi-window sampling instead of just first N seconds
         if self.use_multi_window and duration >= 5.0:
@@ -403,28 +374,22 @@ class AudioFingerprinter:
     
     def _match_multi_window(self, audio_array: np.ndarray, sr: int, start_time: float, duration: float) -> Dict[str, Any]:
         """Multi-window matching for robust distorted clip handling."""
-        print(f"   Using multi-window sampling ({self.num_windows} windows)")
         
         # Extract windows
         windows = self._get_audio_windows(audio_array, sr, self.num_windows)
-        print(f"   Extracted {len(windows)} windows")
         
         # Match each window independently
         window_results = []
         all_matches = defaultdict(list)
         
         for idx, (window_audio, window_offset) in enumerate(windows):
-            print(f"\n   Window {idx+1}/{len(windows)} (offset: {window_offset:.1f}s):")
             
             # Fingerprint window
             peaks = self._get_spectrogram_peaks(window_audio)
             window_fingerprints = self._create_hashes(peaks)
             
             if not window_fingerprints:
-                print(f"      No fingerprints in window {idx+1}")
                 continue
-            
-            print(f"      Generated {len(window_fingerprints)} hashes")
             
             # Filter common hashes
             filtered_hashes = [
@@ -432,15 +397,10 @@ class AudioFingerprinter:
                 if h not in self.common_hash_stoplist
             ]
             
-            filtered_count = len(window_fingerprints) - len(filtered_hashes)
-            if filtered_count > 0:
-                print(f"      Filtered {filtered_count} common hashes")
-            
             if not filtered_hashes:
                 continue
             
             # Search
-            print(f"      Searching {len(filtered_hashes)} hashes...")
             window_matches = defaultdict(list)
             
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
@@ -463,7 +423,6 @@ class AudioFingerprinter:
                 best_ep, best_off, best_cnt, candidates = self._find_best_alignment(window_matches)
                 
                 sharpness = candidates[0]['sharpness'] if candidates else 0.0
-                print(f"      Best: {best_ep} ({best_cnt:.1f} aligned, sharpness: {sharpness:.2f})")
                 
                 window_results.append({
                     'episode_id': best_ep,
@@ -473,12 +432,10 @@ class AudioFingerprinter:
                 })
         
         if not window_results:
-            print("\n   ❌ No matches in any window")
             return {}
         
         # Vote across windows - require same episode to win in multiple windows
         episode_votes = Counter(r['episode_id'] for r in window_results)
-        print(f"\n   Window voting: {dict(episode_votes.most_common(3))}")
         
         # Check for consensus
         winner, num_wins = episode_votes.most_common(1)[0]
@@ -504,14 +461,6 @@ class AudioFingerprinter:
                 required_sharpness = self.min_peak_sharpness
                 sharpness_note = f"(standard: {self.min_peak_sharpness})"
             
-            print(f"\n   Quality check:")
-            print(f"      Top1: {candidates[0]['episode_id']} ({top1_aligned:.1f} aligned)")
-            print(f"      Top2: {candidates[1]['episode_id']} ({top2_aligned:.1f} aligned)")
-            print(f"      Ratio: {ratio:.2f} (need {self.min_confidence_ratio})")
-            print(f"      Margin: {margin:.1f} (need {self.min_confidence_margin})")
-            print(f"      Sharpness: {sharpness:.2f} (need {required_sharpness}) {sharpness_note}")
-            print(f"      Window wins: {num_wins}/{len(windows)} (need {self.min_window_agreement})")
-            
             # Check ALL quality gates
             ratio_pass = ratio >= self.min_confidence_ratio
             margin_pass = margin >= self.min_confidence_margin
@@ -522,11 +471,6 @@ class AudioFingerprinter:
             
             if not quality_passed:
                 # OPTIMIZATION 1: Return candidates with unsure flag
-                print(f"\n   ❌ QUALITY CHECK FAILED - returning candidates with unsure flag")
-                print(f"      Ratio: {'✓' if ratio_pass else '✗'}")
-                print(f"      Margin: {'✓' if margin_pass else '✗'}")
-                print(f"      Sharpness: {'✓' if sharpness_pass else '✗'}")
-                print(f"      Windows: {'✓' if window_pass else '✗'}")
                 
                 return self._format_response_with_candidates(
                     candidates=candidates,
@@ -543,7 +487,6 @@ class AudioFingerprinter:
                 )
             
             # Quality check passed - return confident match
-            print(f"\n   ✅ QUALITY CHECK PASSED")
             
             return self._format_response_with_candidates(
                 candidates=candidates,
@@ -560,7 +503,6 @@ class AudioFingerprinter:
             )
         
         # Single candidate or no candidates - insufficient data
-        print(f"\n   ❌ INSUFFICIENT CANDIDATES (need ≥2 for comparison)")
         return self._format_response_with_candidates(
             candidates=candidates,
             best_ep=best_episode if candidates else None,
@@ -574,7 +516,6 @@ class AudioFingerprinter:
     
     def _match_incremental_single(self, audio_array: np.ndarray, sr: int, start_time: float, duration: float) -> Dict[str, Any]:
         """Incremental matching for short clips (< 5s)."""
-        print(f"   Using single-window incremental (short clip)")
         
         # Incremental durations: 3s, 5s, 8s, 10s (or full duration)
         durations = [d for d in self.incremental_durations if d <= duration]
@@ -591,18 +532,14 @@ class AudioFingerprinter:
             chunk_samples = int(step_duration * sr)
             audio_chunk = audio_array[:chunk_samples]
             
-            print(f"\n📊 Step {step_idx+1}/{len(durations)}: Fingerprinting {step_duration:.1f}s...")
-            
             # Generate fingerprints for this chunk
             peaks = self._get_spectrogram_peaks(audio_chunk)
             chunk_fingerprints = self._create_hashes(peaks)
             
             if not chunk_fingerprints:
-                print("   No fingerprints found in chunk.")
                 continue
             
             total_fingerprints_generated = len(chunk_fingerprints)
-            print(f"   Generated {len(chunk_fingerprints)} hashes")
             
             # OPTIMIZATION B: Filter out common hashes
             filtered_hashes = [
@@ -610,16 +547,10 @@ class AudioFingerprinter:
                 if h not in self.common_hash_stoplist
             ]
             
-            filtered_count = len(chunk_fingerprints) - len(filtered_hashes)
-            if filtered_count > 0:
-                print(f"   Filtered {filtered_count} common hashes (stoplist)")
-            
             if not filtered_hashes:
-                print("   All hashes were common - extending...")
                 continue
             
             # Search all seasons in parallel
-            print(f"   Searching {len(filtered_hashes)} hashes across {len(self.loaded_seasons)} seasons...")
             lookup_start = time.time()
             
             step_matches = defaultdict(list)
@@ -639,23 +570,17 @@ class AudioFingerprinter:
                     except Exception as e:
                         pass  # Silent fail for individual seasons
             
-            lookup_time = time.time() - lookup_start
-            print(f"   ⏱️  Lookup: {lookup_time:.2f}s")
-            
             # Check if we have a confident match
             if step_matches:
                 best_ep, best_off, best_cnt, candidates = self._find_best_alignment(step_matches)
                 
                 sharpness = candidates[0].get('sharpness', 0.0) if candidates else 0.0
-                print(f"   🎯 Best match: {best_ep} ({best_cnt:.1f} aligned, sharpness: {sharpness:.2f})")
                 
                 # Check margin and sharpness for early exit
                 if len(candidates) >= 2:
                     top2_cnt = candidates[1]['aligned_matches']
                     ratio = best_cnt / (top2_cnt + 1)
                     margin = best_cnt - top2_cnt
-                    
-                    print(f"      Margin check: ratio={ratio:.2f}, margin={margin:.1f}, sharpness={sharpness:.2f}")
                     
                     # ROBUST EARLY EXIT: require ALL conditions
                     quality_passed = (best_cnt >= self.min_aligned_early_exit and 
@@ -665,9 +590,6 @@ class AudioFingerprinter:
                     
                     if quality_passed:
                         elapsed = time.time() - start_time
-                        print(f"\n🚀 CONFIDENT MATCH found at step {step_idx+1}/{len(durations)}")
-                        print(f"   Only fingerprinted {step_duration:.1f}s (vs {duration:.1f}s full)")
-                        print(f"   Total time: {elapsed:.2f}s")
                         
                         return self._format_response_with_candidates(
                             candidates=candidates,
@@ -682,23 +604,12 @@ class AudioFingerprinter:
                             sharpness=sharpness,
                             method=f"incremental_pkl_step_{step_idx+1}"
                         )
-            
-            step_time = time.time() - step_start
-            print(f"   Step {step_idx+1} total: {step_time:.2f}s")
         
         # No confident match found after all steps
-        print(f"\n⚠️  No confident match after all incremental steps")
-        
         elapsed = time.time() - start_time
         
         if all_matches:
             best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(all_matches)
-            
-            print(f"⏱️  Total matching took {elapsed:.2f}s")
-            print("📊 Top 10 Candidates:")
-            for c in top_candidates[:10]:
-                sharpness = c.get('sharpness', 0.0)
-                print(f"   - {c['episode_id']}: {c['aligned_matches']:.1f} aligned (sharpness: {sharpness:.2f})")
             
             # Calculate quality metrics
             ratio = 0.0
@@ -741,7 +652,6 @@ class AudioFingerprinter:
         Full audio matching (non-incremental, for backward compatibility).
         Still uses optimization B (common hash filtering).
         """
-        print("🔍 Using FULL matching (Optimization B+C, no incremental)")
         
         peaks = self._get_spectrogram_peaks(audio_array)
         query_prints = self._create_hashes(peaks)
@@ -749,7 +659,6 @@ class AudioFingerprinter:
             return {}
 
         total_query_hashes = len(query_prints)
-        print(f"   Generated {total_query_hashes} hashes")
         
         # OPTIMIZATION B: Filter common hashes
         filtered_hashes = [
@@ -757,15 +666,8 @@ class AudioFingerprinter:
             if h not in self.common_hash_stoplist
         ]
         
-        filtered_count = len(query_prints) - len(filtered_hashes)
-        if filtered_count > 0:
-            print(f"   Filtered {filtered_count} common hashes (stoplist)")
-        
         if not filtered_hashes:
-            print("   All hashes were common.")
             return {}
-        
-        print(f"🔍 Searching {len(filtered_hashes)} hashes across {len(self.loaded_seasons)} seasons...")
 
         # Two-pass strategy with parallel season search
         passes = [1000, 3000]
@@ -807,23 +709,17 @@ class AudioFingerprinter:
             if pass_matches:
                 best_ep, best_off, best_cnt, _ = self._find_best_alignment(pass_matches)
                 if pass_idx == 0 and best_cnt >= 30:
-                    print(f"🚀 Strong match in Pass 1 ({best_cnt} aligned). Stopping early.")
                     break
                 if pass_idx == 1 and best_cnt >= 25:
                     break
 
         if not all_matches:
-            print("   ❌ No matches found")
             return {}
 
-        # Find best match
+        # Find best match        
         best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(all_matches)
 
         elapsed = time.time() - start_time
-        print(f"⏱️  Parallel matching took {elapsed:.2f}s")
-        print("📊 Top 10 Candidates:")
-        for c in top_candidates[:10]:
-            print(f"   - {c['episode_id']}: {c['aligned_matches']} aligned ({c['raw_matches']} raw)")
 
         # Always return top 3 candidates
         if best_episode and top_candidates:
@@ -944,7 +840,6 @@ class AudioFingerprinter:
         if not self.use_idf_weighting:
             return
         
-        print("   Building hash document frequency cache...")
         self.hash_df_cache = {}
         
         for season, fingerprints in self.season_fingerprints.items():
@@ -952,8 +847,6 @@ class AudioFingerprinter:
                 # Count unique episodes this hash appears in
                 unique_episodes = len(set(self.season_episodes[season][x['ep_idx']] for x in arr))
                 self.hash_df_cache[h] = self.hash_df_cache.get(h, 0) + unique_episodes
-        
-        print(f"   ✓ Cached {len(self.hash_df_cache):,} hash document frequencies")
     
     def _find_best_alignment(self, matches_dict: Dict[str, List[Tuple[float, float]]]) -> Tuple[str, float, float, List[Dict]]:
         """
@@ -1121,7 +1014,6 @@ class AudioFingerprinter:
             y, sr = librosa.load(file_path, sr=self.sr, mono=True)
             return self.match_audio_array(y, sr)
         except Exception as e:
-            print(f"Error matching clip {file_path}: {e}")
             return {}
 
     def get_stats(self) -> Dict[str, Any]:
@@ -1169,7 +1061,6 @@ class AudioFingerprinter:
             y, sr = librosa.load(file_path, sr=self.sr, mono=True)
             return self.add_episode_array(episode_id, y, sr)
         except Exception as e:
-            print(f"Error adding episode {episode_id}: {e}")
             return False
     
     def add_episode_array(self, episode_id: str, audio_array: np.ndarray, sr: int) -> bool:
@@ -1188,13 +1079,11 @@ class AudioFingerprinter:
         fingerprints = self.fingerprint_audio_array(audio_array, sr)
         
         if not fingerprints:
-            print(f"⚠️  No fingerprints generated for {episode_id}")
             return False
         
         # Determine season
         season = self._get_season_from_episode_id(episode_id)
         if season is None:
-            print(f"⚠️  Cannot determine season from episode ID: {episode_id}")
             return False
         
         # Load the season database if not already loaded (for merging)
@@ -1224,12 +1113,10 @@ class AudioFingerprinter:
             else:
                 self.season_fingerprints[season][h] = new_entry
 
-        print(f"✓ Added {episode_id}: {len(fingerprints)} fingerprints")
         return True
     
     def force_save_all(self):
         """Save all in-memory fingerprints to pickle files, organized by season."""
-        print("💾 Saving all databases to pickle files...")
 
         # Save each season database
         saved_count = 0
@@ -1259,8 +1146,8 @@ class AudioFingerprinter:
                     with open(db_path, 'rb') as f:
                         existing_data = pickle.load(f)
                     existing_fingerprints = existing_data.get('fingerprints', existing_data) if isinstance(existing_data, dict) else existing_data
-                except Exception as e:
-                    print(f"   ⚠️  Could not load existing {db_file}: {e}")
+                    except Exception as e:
+                        pass
             
             # Merge with existing
             for h, entries in existing_fingerprints.items():
@@ -1292,12 +1179,9 @@ class AudioFingerprinter:
                 with open(db_path, 'wb') as f:
                     pickle.dump(save_data, f)
                 
-                print(f"   ✓ Saved {db_file} ({len(fingerprints):,} hashes, {len(episode_counts)} episodes)")
                 saved_count += 1
             except Exception as e:
-                print(f"   ❌ Error saving {db_file}: {e}")
-        
-        print(f"✅ Saved {saved_count} database files")
+                pass
     
     def clear_db(self):
         """Clear all in-memory fingerprints (for testing)."""
@@ -1305,7 +1189,6 @@ class AudioFingerprinter:
         self.season_episodes.clear()
         self.season_episode_to_idx.clear()
         self.loaded_seasons.clear()
-        print("🗑️  Cleared all fingerprints from memory")
 
 # Global instance - use lazy loading if environment variable is set
 audio_matcher = AudioFingerprinter()
