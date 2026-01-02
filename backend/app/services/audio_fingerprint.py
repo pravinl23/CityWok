@@ -1146,8 +1146,8 @@ class AudioFingerprinter:
                     with open(db_path, 'rb') as f:
                         existing_data = pickle.load(f)
                     existing_fingerprints = existing_data.get('fingerprints', existing_data) if isinstance(existing_data, dict) else existing_data
-                    except Exception as e:
-                        pass
+                except Exception as e:
+                    pass
             
             # Merge with existing
             for h, entries in existing_fingerprints.items():
