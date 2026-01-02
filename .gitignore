@@ -1,5 +1,6 @@
 # Environment
 .env
+.env.local
 
 # Logs
 *.log
@@ -31,6 +32,11 @@ backend/data/
 .DS_Store
 Thumbs.db
 
-# Documentation (user may want to track some)
-# *.md
-# *.txt
+# Documentation
+docs/
+
+# Secrets scanning baseline
+.secrets.baseline
+
+# Pre-commit
+.pre-commit-config.yaml
