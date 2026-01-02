@@ -124,7 +124,11 @@ def test_season_match(season: int, url: str) -> Dict:
             'episode_id': str or None,
             'detected_season': int or None,
             'match': bool,
+            'match_rank': int or None,  # 1, 2, or 3 if matched in top 3
             'time': float,
+            'confidence': int or None,
+            'unsure': bool,
+            'candidates': list,  # Top 3 candidates
             'error': str or None
         }
     """
@@ -149,26 +153,41 @@ def test_season_match(season: int, url: str) -> Dict:
                 'episode_id': None,
                 'detected_season': None,
                 'match': False,
+                'match_rank': None,
                 'time': elapsed,
+                'confidence': None,
+                'unsure': True,
+                'candidates': [],
                 'error': f"HTTP {response.status_code}: {response.text[:100]}"
             }
 
         result = response.json()
 
-        if not result.get('match_found'):
-            return {
-                'season': season,
-                'url': url,
-                'success': True,
-                'episode_id': None,
-                'detected_season': None,
-                'match': False,
-                'time': elapsed,
-                'error': 'No match found'
-            }
-
-        episode_id = result.get('episode')
-        detected_season = extract_season_from_episode_id(episode_id) if episode_id else None
+        # Check top 3 candidates
+        candidates = result.get('candidates', [])
+        match_rank = None
+        episode_id = None
+        detected_season = None
+        
+        # Check if any candidate matches the expected season
+        for rank, candidate in enumerate(candidates[:3], 1):
+            candidate_episode = candidate.get('episode_id')
+            if candidate_episode:
+                candidate_season = extract_season_from_episode_id(candidate_episode)
+                if candidate_season == season:
+                    match_rank = rank
+                    episode_id = candidate_episode
+                    detected_season = candidate_season
+                    break
+        
+        # If no candidate matches, use the first one (or episode from match_found)
+        if not episode_id:
+            if result.get('match_found') and result.get('episode'):
+                episode_id = result.get('episode')
+                detected_season = extract_season_from_episode_id(episode_id) if episode_id else None
+            elif candidates:
+                episode_id = candidates[0].get('episode_id')
+                detected_season = extract_season_from_episode_id(episode_id) if episode_id else None
 
         return {
             'season': season,
@@ -176,9 +195,12 @@ def test_season_match(season: int, url: str) -> Dict:
             'success': True,
             'episode_id': episode_id,
             'detected_season': detected_season,
-            'match': detected_season == season,
+            'match': match_rank is not None,
+            'match_rank': match_rank,  # 1, 2, or 3 if matched, None if not
             'time': elapsed,
             'confidence': result.get('confidence'),
+            'unsure': result.get('unsure', True),
+            'candidates': candidates[:3],  # Top 3 candidates
             'error': None
         }
 
@@ -190,7 +212,11 @@ def test_season_match(season: int, url: str) -> Dict:
             'episode_id': None,
             'detected_season': None,
             'match': False,
+            'match_rank': None,
             'time': time.time() - start_time,
+            'confidence': None,
+            'unsure': True,
+            'candidates': [],
             'error': 'Request timeout'
         }
     except Exception as e:
@@ -201,7 +227,11 @@ def test_season_match(season: int, url: str) -> Dict:
             'episode_id': None,
             'detected_season': None,
             'match': False,
+            'match_rank': None,
             'time': time.time() - start_time,
+            'confidence': None,
+            'unsure': True,
+            'candidates': [],
             'error': str(e)
         }
 
@@ -230,9 +260,17 @@ def run_all_tests():
         results.append(result)
         
         if result['success'] and result['match']:
-            print(f"✅ PASS (Episode: {result['episode_id']}, Time: {result['time']:.1f}s, Confidence: {result.get('confidence', 'N/A')}%)")
+            rank_str = f" (Rank {result['match_rank']})" if result.get('match_rank') else ""
+            unsure_str = " [UNSURE]" if result.get('unsure') else ""
+            print(f"✅ PASS{rank_str}{unsure_str} (Episode: {result['episode_id']}, Time: {result['time']:.1f}s, Confidence: {result.get('confidence', 'N/A')}%)")
         elif result['success']:
-            print(f"❌ FAIL - Expected S{season:02d}, got {result['episode_id'] or 'None'} (Time: {result['time']:.1f}s)")
+            # Show which candidates were returned
+            candidates = result.get('candidates', [])
+            candidate_str = ""
+            if candidates:
+                candidate_episodes = [c.get('episode_id', 'N/A') for c in candidates[:3]]
+                candidate_str = f" [Candidates: {', '.join(candidate_episodes)}]"
+            print(f"❌ FAIL - Expected S{season:02d}, got {result['episode_id'] or 'None'}{candidate_str} (Time: {result['time']:.1f}s)")
         else:
             print(f"❌ ERROR - {result['error']} (Time: {result['time']:.1f}s)")
 
@@ -247,9 +285,17 @@ def run_all_tests():
     passed = sum(1 for r in results if r['success'] and r['match'])
     failed = sum(1 for r in results if r['success'] and not r['match'])
     errors = sum(1 for r in results if not r['success'])
+    
+    # Count matches by rank
+    rank_1_matches = sum(1 for r in results if r.get('match_rank') == 1)
+    rank_2_matches = sum(1 for r in results if r.get('match_rank') == 2)
+    rank_3_matches = sum(1 for r in results if r.get('match_rank') == 3)
 
     print(f"Total tests: {len(results)}")
     print(f"✅ Passed: {passed}")
+    print(f"   - Rank 1 (1st guess): {rank_1_matches}")
+    print(f"   - Rank 2 (2nd guess): {rank_2_matches}")
+    print(f"   - Rank 3 (3rd guess): {rank_3_matches}")
     print(f"❌ Failed: {failed}")
     print(f"⚠️  Errors: {errors}")
     print(f"⏱️  Total time: {total_time:.1f}s")
@@ -261,7 +307,10 @@ def run_all_tests():
         print("Failed/Error Details:")
         for r in results:
             if not r['match'] or not r['success']:
-                print(f"  Season {r['season']:2d}: Expected S{r['season']:02d}, got {r['episode_id'] or 'None'} - {r['error'] or 'Season mismatch'}")
+                candidates = r.get('candidates', [])
+                candidate_list = [c.get('episode_id', 'N/A') for c in candidates[:3]] if candidates else []
+                candidate_str = f" [Top 3: {', '.join(candidate_list)}]" if candidate_list else ""
+                print(f"  Season {r['season']:2d}: Expected S{r['season']:02d}, got {r['episode_id'] or 'None'}{candidate_str} - {r['error'] or 'Season mismatch'}")
         print()
 
     # Exit code

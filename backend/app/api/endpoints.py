@@ -436,38 +436,43 @@ async def _identify_with_progress(
         # Searching
         await _send_progress(progress_queue, "searching", "Searching database for matches...")
         
-        # Handle new response format with match_found flag
-        if result and result.get('match_found'):
-            # Confident match found
-            await _send_progress(progress_queue, "complete", "Match found!")
+        # Handle new response format - always returns top 3 candidates
+        if result:
+            # Always include top 3 candidates
             response = {
-                "match_found": True,
-                "episode": result['episode_id'],
-                "timestamp": format_time(result['timestamp']),
-                "confidence": result.get('confidence', 0),
-                "aligned_matches": result.get('aligned_matches', 0),
-                "total_matches": result.get('total_matches', 0)
+                "match_found": result.get('match_found', False),
+                "unsure": result.get('unsure', True),
+                "candidates": result.get('candidates', [])
             }
-            if 'message' in result:
-                response['message'] = result['message']
-            await progress_queue.put(response)
-        elif result and result.get('candidates'):
-            # Low confidence - return candidates
-            await _send_progress(progress_queue, "complete", "Low confidence match")
-            response = {
-                "match_found": False,
-                "reason": result.get('reason', 'low_confidence'),
-                "message": result.get('message', 'Unable to confidently identify episode'),
-                "candidates": result['candidates'],
-                "quality_metrics": result.get('quality_metrics', {})
-            }
+            
+            # If confident match, include episode details
+            if result.get('match_found'):
+                await _send_progress(progress_queue, "complete", "Match found!")
+                response.update({
+                    "episode": result.get('episode_id'),
+                    "timestamp": format_time(result.get('timestamp', 0)),
+                    "confidence": result.get('confidence', 0),
+                    "aligned_matches": result.get('aligned_matches', 0),
+                    "total_matches": result.get('total_matches', 0)
+                })
+            else:
+                # Unsure match - include message
+                await _send_progress(progress_queue, "complete", "Low confidence match")
+                response.update({
+                    "reason": result.get('reason', 'low_confidence'),
+                    "message": result.get('message', "I'm not quite sure, but this is my best guess"),
+                    "quality_metrics": result.get('quality_metrics', {})
+                })
+            
             await progress_queue.put(response)
         else:
             # No matches at all
             await _send_progress(progress_queue, "complete", "No match found")
             await progress_queue.put({
                 "match_found": False,
-                "message": "No confident match found in database"
+                "unsure": True,
+                "message": "No matches found in database",
+                "candidates": []
             })
         
     except HTTPException as e:
@@ -670,34 +675,40 @@ async def identify_episode(
                 background_tasks.add_task(cleanup_file, temp_path)
             result = audio_matcher.match_clip(audio_path)
         
-        # Handle new response format with match_found flag
-        if result and result.get('match_found'):
-            # Confident match found
+        # Handle new response format - always returns top 3 candidates
+        if result:
+            # Always include top 3 candidates
             response = {
-                "match_found": True,
-                "episode": result['episode_id'],
-                "timestamp": format_time(result['timestamp']),
-                "confidence": result.get('confidence', 0),
-                "aligned_matches": result.get('aligned_matches', 0),
-                "total_matches": result.get('total_matches', 0)
+                "match_found": result.get('match_found', False),
+                "unsure": result.get('unsure', True),
+                "candidates": result.get('candidates', [])
             }
-            if 'message' in result:
-                response['message'] = result['message']
+            
+            # If confident match, include episode details
+            if result.get('match_found'):
+                response.update({
+                    "episode": result.get('episode_id'),
+                    "timestamp": format_time(result.get('timestamp', 0)),
+                    "confidence": result.get('confidence', 0),
+                    "aligned_matches": result.get('aligned_matches', 0),
+                    "total_matches": result.get('total_matches', 0)
+                })
+            else:
+                # Unsure match - include message
+                response.update({
+                    "reason": result.get('reason', 'low_confidence'),
+                    "message": result.get('message', "I'm not quite sure, but this is my best guess"),
+                    "quality_metrics": result.get('quality_metrics', {})
+                })
+            
             return response
-        elif result and result.get('candidates'):
-            # Low confidence - return candidates
-            return {
-                "match_found": False,
-                "reason": result.get('reason', 'low_confidence'),
-                "message": result.get('message', 'Unable to confidently identify episode'),
-                "candidates": result['candidates'],
-                "quality_metrics": result.get('quality_metrics', {})
-            }
         else:
             # No matches at all
             return {
                 "match_found": False,
-                "message": "No confident match found in database"
+                "unsure": True,
+                "message": "No matches found in database",
+                "candidates": []
             }
         
     except HTTPException:

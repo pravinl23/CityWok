@@ -521,71 +521,56 @@ class AudioFingerprinter:
             quality_passed = ratio_pass and margin_pass and sharpness_pass and window_pass
             
             if not quality_passed:
-                # OPTIMIZATION 1: Return null with candidates instead of forcing wrong answer
-                print(f"\n   ❌ QUALITY CHECK FAILED - returning candidates only")
+                # OPTIMIZATION 1: Return candidates with unsure flag
+                print(f"\n   ❌ QUALITY CHECK FAILED - returning candidates with unsure flag")
                 print(f"      Ratio: {'✓' if ratio_pass else '✗'}")
                 print(f"      Margin: {'✓' if margin_pass else '✗'}")
                 print(f"      Sharpness: {'✓' if sharpness_pass else '✗'}")
                 print(f"      Windows: {'✓' if window_pass else '✗'}")
                 
-                return {
-                    "match_found": False,
-                    "reason": "low_confidence",
-                    "message": "Unable to confidently identify episode - match quality too low",
-                    "candidates": [
-                        {
-                            "episode_id": c['episode_id'],
-                            "aligned_matches": int(c['aligned_matches']),
-                            "offset": c['offset'],
-                            "sharpness": round(c.get('sharpness', 0.0), 2)
-                        }
-                        for c in candidates[:3]
-                    ],
-                    "quality_metrics": {
-                        "ratio": round(ratio, 2),
-                        "margin": round(margin, 1),
-                        "sharpness": round(sharpness, 2),
-                        "window_agreement": f"{num_wins}/{len(windows)}"
-                    },
-                    "processing_time": elapsed
-                }
+                return self._format_response_with_candidates(
+                    candidates=candidates,
+                    best_ep=best_episode,
+                    best_offset=best_offset,
+                    best_count=top1_aligned,
+                    all_matches=all_matches,
+                    elapsed=elapsed,
+                    quality_passed=False,
+                    ratio=ratio,
+                    margin=margin,
+                    sharpness=sharpness,
+                    method=f"multi_window_{len(windows)}"
+                )
             
             # Quality check passed - return confident match
             print(f"\n   ✅ QUALITY CHECK PASSED")
             
-            # Calculate confidence
-            confidence = min(99, int((top1_aligned / max(1, len(all_matches[best_episode]))) * 100))
-            
-            return {
-                "match_found": True,
-                "episode_id": best_episode,
-                "timestamp": max(0, best_offset),
-                "confidence": confidence,
-                "aligned_matches": int(top1_aligned),
-                "total_matches": len(all_matches[best_episode]),
-                "method": f"multi_window_{len(windows)}",
-                "processing_time": elapsed,
-                "window_agreement": f"{num_wins}/{len(windows)}",
-                "quality_ratio": round(ratio, 2),
-                "quality_sharpness": round(sharpness, 2)
-            }
+            return self._format_response_with_candidates(
+                candidates=candidates,
+                best_ep=best_episode,
+                best_offset=best_offset,
+                best_count=top1_aligned,
+                all_matches=all_matches,
+                elapsed=elapsed,
+                quality_passed=True,
+                ratio=ratio,
+                margin=margin,
+                sharpness=sharpness,
+                method=f"multi_window_{len(windows)}"
+            )
         
         # Single candidate or no candidates - insufficient data
         print(f"\n   ❌ INSUFFICIENT CANDIDATES (need ≥2 for comparison)")
-        return {
-            "match_found": False,
-            "reason": "insufficient_candidates",
-            "message": "Unable to confidently identify episode - not enough data",
-            "candidates": [
-                {
-                    "episode_id": c['episode_id'],
-                    "aligned_matches": int(c['aligned_matches']),
-                    "offset": c['offset']
-                }
-                for c in candidates[:1]
-            ] if candidates else [],
-            "processing_time": elapsed
-        }
+        return self._format_response_with_candidates(
+            candidates=candidates,
+            best_ep=best_episode if candidates else None,
+            best_offset=best_offset if candidates else 0.0,
+            best_count=best_count if candidates else 0.0,
+            all_matches=all_matches,
+            elapsed=elapsed,
+            quality_passed=False,
+            method="multi_window_insufficient"
+        )
     
     def _match_incremental_single(self, audio_array: np.ndarray, sr: int, start_time: float, duration: float) -> Dict[str, Any]:
         """Incremental matching for short clips (< 5s)."""
@@ -673,37 +658,30 @@ class AudioFingerprinter:
                     print(f"      Margin check: ratio={ratio:.2f}, margin={margin:.1f}, sharpness={sharpness:.2f}")
                     
                     # ROBUST EARLY EXIT: require ALL conditions
-                    if (best_cnt >= self.min_aligned_early_exit and 
-                        ratio >= self.min_confidence_ratio and
-                        margin >= self.min_confidence_margin and
-                        sharpness >= self.min_peak_sharpness):
-                        
+                    quality_passed = (best_cnt >= self.min_aligned_early_exit and 
+                                     ratio >= self.min_confidence_ratio and
+                                     margin >= self.min_confidence_margin and
+                                     sharpness >= self.min_peak_sharpness)
+                    
+                    if quality_passed:
                         elapsed = time.time() - start_time
                         print(f"\n🚀 CONFIDENT MATCH found at step {step_idx+1}/{len(durations)}")
                         print(f"   Only fingerprinted {step_duration:.1f}s (vs {duration:.1f}s full)")
                         print(f"   Total time: {elapsed:.2f}s")
                         
-                        confidence = min(99, int((best_cnt / total_fingerprints_generated) * 100))
-                        
-                        result = {
-                            "match_found": True,
-                            "episode_id": best_ep,
-                            "timestamp": max(0, best_off),
-                            "confidence": confidence,
-                            "aligned_matches": int(best_cnt),
-                            "total_matches": len(all_matches[best_ep]),
-                            "method": f"incremental_pkl_step_{step_idx+1}",
-                            "processing_time": elapsed,
-                            "duration_used": step_duration,
-                            "duration_saved": duration - step_duration,
-                            "quality_ratio": round(ratio, 2),
-                            "quality_sharpness": round(sharpness, 2)
-                        }
-                        
-                        if confidence < 50:
-                            result["message"] = "⚠️ Low confidence - this is my best guess but I'm not sure"
-                        
-                        return result
+                        return self._format_response_with_candidates(
+                            candidates=candidates,
+                            best_ep=best_ep,
+                            best_offset=best_off,
+                            best_count=best_cnt,
+                            all_matches=all_matches,
+                            elapsed=elapsed,
+                            quality_passed=True,
+                            ratio=ratio,
+                            margin=margin,
+                            sharpness=sharpness,
+                            method=f"incremental_pkl_step_{step_idx+1}"
+                        )
             
             step_time = time.time() - step_start
             print(f"   Step {step_idx+1} total: {step_time:.2f}s")
@@ -711,9 +689,10 @@ class AudioFingerprinter:
         # No confident match found after all steps
         print(f"\n⚠️  No confident match after all incremental steps")
         
+        elapsed = time.time() - start_time
+        
         if all_matches:
             best_episode, best_offset, best_count, top_candidates = self._find_best_alignment(all_matches)
-            elapsed = time.time() - start_time
             
             print(f"⏱️  Total matching took {elapsed:.2f}s")
             print("📊 Top 10 Candidates:")
@@ -721,28 +700,41 @@ class AudioFingerprinter:
                 sharpness = c.get('sharpness', 0.0)
                 print(f"   - {c['episode_id']}: {c['aligned_matches']:.1f} aligned (sharpness: {sharpness:.2f})")
             
-            # Return candidates only (no confident match)
-            if best_count >= 5:
-                return {
-                    "match_found": False,
-                    "reason": "low_confidence",
-                    "message": "Unable to confidently identify episode - match quality too low",
-                    "candidates": [
-                        {
-                            "episode_id": c['episode_id'],
-                            "aligned_matches": int(c['aligned_matches']),
-                            "offset": c['offset'],
-                            "sharpness": round(c.get('sharpness', 0.0), 2)
-                        }
-                        for c in top_candidates[:3]
-                    ],
-                    "processing_time": elapsed
-                }
+            # Calculate quality metrics
+            ratio = 0.0
+            margin = 0.0
+            sharpness = 0.0
+            if len(top_candidates) >= 2:
+                ratio = best_count / (top_candidates[1]['aligned_matches'] + 1)
+                margin = best_count - top_candidates[1]['aligned_matches']
+                sharpness = top_candidates[0].get('sharpness', 0.0)
+            
+            # Always return top 3 candidates
+            return self._format_response_with_candidates(
+                candidates=top_candidates,
+                best_ep=best_episode,
+                best_offset=best_offset,
+                best_count=best_count,
+                all_matches=all_matches,
+                elapsed=elapsed,
+                quality_passed=False,
+                ratio=ratio,
+                margin=margin,
+                sharpness=sharpness,
+                method="incremental_final"
+            )
         
-        return {
-            "match_found": False,
-            "message": "No matches found in database"
-        }
+        # No matches at all
+        return self._format_response_with_candidates(
+            candidates=[],
+            best_ep=None,
+            best_offset=0.0,
+            best_count=0.0,
+            all_matches={},
+            elapsed=elapsed,
+            quality_passed=False,
+            method="incremental_final"
+        )
     
     def _match_full(self, audio_array: np.ndarray, sr: int, start_time: float) -> Dict[str, Any]:
         """
@@ -833,21 +825,53 @@ class AudioFingerprinter:
         for c in top_candidates[:10]:
             print(f"   - {c['episode_id']}: {c['aligned_matches']} aligned ({c['raw_matches']} raw)")
 
-        # Confidence calculation
-        total_queried = len(queried_indices)
-        min_aligned = max(10, total_queried * 0.01)
-        if best_episode and best_count >= min_aligned:
-            confidence = min(99, int((best_count / total_queried) * 1000))
-            return {
-                "episode_id": best_episode,
-                "timestamp": max(0, best_offset),
-                "confidence": confidence,
-                "aligned_matches": best_count,
-                "total_matches": len(all_matches[best_episode]),
-                "method": "audio_pkl_full",
-                "processing_time": elapsed
-            }
-        return {}
+        # Always return top 3 candidates
+        if best_episode and top_candidates:
+            # Calculate quality metrics from candidates
+            if len(top_candidates) >= 2:
+                top2_count = top_candidates[1]['aligned_matches']
+                ratio = best_count / (top2_count + 1)
+                margin = best_count - top2_count
+                sharpness = top_candidates[0].get('sharpness', 1.0)
+            else:
+                # Fallback if only one candidate
+                ratio = 2.0
+                margin = best_count
+                sharpness = 1.5
+            
+            # Check if quality passes
+            total_queried = len(queried_indices)
+            min_aligned = max(10, total_queried * 0.01)
+            quality_passed = (best_count >= min_aligned and 
+                             ratio >= self.min_confidence_ratio and
+                             margin >= self.min_confidence_margin and
+                             sharpness >= self.min_peak_sharpness)
+            
+            return self._format_response_with_candidates(
+                candidates=top_candidates,
+                best_ep=best_episode,
+                best_offset=best_offset,
+                best_count=best_count,
+                all_matches=all_matches,
+                elapsed=elapsed,
+                quality_passed=quality_passed,
+                ratio=ratio,
+                margin=margin,
+                sharpness=sharpness,
+                method="audio_pkl_full"
+            )
+        
+        # No matches
+        return self._format_response_with_candidates(
+            candidates=[],
+            best_ep=None,
+            best_offset=0.0,
+            best_count=0.0,
+            all_matches={},
+            elapsed=elapsed,
+            quality_passed=False,
+            method="audio_pkl_full"
+        )
 
     def _calculate_peak_sharpness(self, offsets: List[float]) -> float:
         """
@@ -1004,6 +1028,93 @@ class AudioFingerprinter:
         # Sort candidates by aligned matches
         candidates.sort(key=lambda x: x['aligned_matches'], reverse=True)
         return best_ep, best_offset, best_score, candidates[:10]
+    
+    def _format_response_with_candidates(self, candidates: List[Dict], best_ep: str, best_offset: float, 
+                                         best_count: float, all_matches: Dict, elapsed: float,
+                                         quality_passed: bool = False, ratio: float = 0.0, 
+                                         margin: float = 0.0, sharpness: float = 0.0,
+                                         method: str = "incremental") -> Dict[str, Any]:
+        """
+        Format response with top 3 candidates and unsure flag.
+        
+        Always returns top 3 candidates (or fewer if not available).
+        Sets 'unsure' flag based on quality thresholds.
+        """
+        # Always get top 3 candidates (or as many as available)
+        top_3 = candidates[:3] if candidates else []
+        
+        # Format candidates
+        formatted_candidates = [
+            {
+                "episode_id": c['episode_id'],
+                "aligned_matches": int(c['aligned_matches']),
+                "offset": c['offset'],
+                "sharpness": round(c.get('sharpness', 0.0), 2),
+                "confidence": round((c['aligned_matches'] / max(1, best_count)) * 100, 1) if best_count > 0 else 0
+            }
+            for c in top_3
+        ]
+        
+        # Determine if unsure based on quality thresholds
+        unsure = False
+        if len(candidates) >= 2:
+            top1_aligned = candidates[0]['aligned_matches']
+            top2_aligned = candidates[1]['aligned_matches']
+            actual_ratio = top1_aligned / (top2_aligned + 1)
+            actual_margin = top1_aligned - top2_aligned
+            actual_sharpness = candidates[0].get('sharpness', 0.0)
+            
+            # Check if quality gates pass
+            ratio_pass = actual_ratio >= self.min_confidence_ratio
+            margin_pass = actual_margin >= self.min_confidence_margin
+            sharpness_pass = actual_sharpness >= self.min_peak_sharpness
+            count_pass = top1_aligned >= self.min_aligned_early_exit
+            
+            # Unsure if any quality gate fails
+            unsure = not (ratio_pass and margin_pass and sharpness_pass and count_pass)
+        elif len(candidates) == 1:
+            # Only one candidate - always unsure
+            unsure = True
+        else:
+            # No candidates - return empty
+            return {
+                "match_found": False,
+                "unsure": True,
+                "message": "No matches found in database",
+                "candidates": [],
+                "processing_time": elapsed
+            }
+        
+        # If quality passed and we have a confident match
+        if quality_passed and not unsure and best_ep:
+            confidence = min(99, int((best_count / max(1, len(all_matches.get(best_ep, [])))) * 100))
+            return {
+                "match_found": True,
+                "unsure": False,
+                "episode_id": best_ep,
+                "timestamp": max(0, best_offset),
+                "confidence": confidence,
+                "aligned_matches": int(best_count),
+                "total_matches": len(all_matches.get(best_ep, [])),
+                "candidates": formatted_candidates,
+                "method": method,
+                "processing_time": elapsed
+            }
+        else:
+            # Return candidates with unsure flag
+            return {
+                "match_found": False,
+                "unsure": True,
+                "reason": "low_confidence" if candidates else "no_matches",
+                "message": "I'm not quite sure, but this is my best guess" if candidates else "No matches found in database",
+                "candidates": formatted_candidates,
+                "quality_metrics": {
+                    "ratio": round(ratio, 2) if ratio > 0 else 0,
+                    "margin": round(margin, 1) if margin > 0 else 0,
+                    "sharpness": round(sharpness, 2) if sharpness > 0 else 0
+                },
+                "processing_time": elapsed
+            }
 
     def match_clip(self, file_path: str) -> Dict[str, Any]:
         try:
