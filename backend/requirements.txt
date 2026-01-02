@@ -1,26 +1,11 @@
-# CityWok Backend Dependencies
-
-# Web Framework
-fastapi>=0.100.0
-uvicorn>=0.23.0
-python-multipart
-
-# Audio Processing
-scipy
-librosa
-numpy
-
-# URL Downloads (TikTok, YouTube, etc.)
-yt-dlp
-curl-cffi
-
-# Cloud Storage (S3/R2) support
-xxhash>=3.0.0
-zstandard>=0.21.0
-
-# Cloud Storage (S3/R2/GCS)
-boto3>=1.28.0
-
-# Testing
-pytest
-httpx
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+numpy==1.24.3
+librosa==0.10.1
+scipy==1.11.3
+soundfile==0.12.1
+yt-dlp==2023.11.16
+boto3==1.29.7
+redis==5.0.1
+sentry-sdk[fastapi]==1.39.1
