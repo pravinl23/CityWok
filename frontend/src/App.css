@@ -492,6 +492,72 @@ html, body {
   margin-bottom: 10px;
 }
 
+/* Loading Container & Progress Bar */
+.loading-container {
+  margin: 15px 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #E0E0E0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  border: 2px solid #000;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #32CD32, #28A745);
+  transition: width 0.3s ease;
+  box-shadow: 0 0 10px rgba(50, 205, 50, 0.5);
+}
+
+/* Wrong Guess Button */
+.wrong-guess-btn {
+  width: 100%;
+  background: #FF6B35;
+  color: #FFF;
+  border: 3px solid #000;
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-top: 15px;
+  box-shadow: 4px 4px 0 #000;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.wrong-guess-btn:hover {
+  background: #FF5722;
+  transform: translateY(-2px);
+  box-shadow: 6px 6px 0 #000;
+}
+
+.wrong-guess-btn:active {
+  transform: translateY(0);
+  box-shadow: 2px 2px 0 #000;
+}
+
+/* No More Guesses Message */
+.no-more-guesses {
+  margin-top: 15px;
+  padding: 15px;
+  background: #FFE5E5;
+  border: 3px solid #FF6B35;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.no-more-guesses p {
+  margin: 0;
+  color: #000;
+}
+
 /* ============================================
    MOBILE RESPONSIVE LAYOUT (≤768px)
    ============================================ */
@@ -661,5 +727,19 @@ html, body {
 
   .content {
     padding: 20px 15px 30px;
+  }
+
+  .wrong-guess-btn {
+    padding: 16px;
+    font-size: 18px;
+  }
+
+  .no-more-guesses {
+    padding: 16px;
+    font-size: 15px;
+  }
+
+  .progress-bar {
+    height: 10px;
   }
 }
