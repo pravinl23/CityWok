@@ -7,14 +7,25 @@ import backgroundMobile from './assets/background-mobile.jpg'
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL
-  if (!envUrl) return 'http://localhost:8000'
   
-  // Ensure URL is properly formatted (remove trailing slashes, ensure it's a valid URL)
+  if (!envUrl) {
+    if (import.meta.env.PROD) {
+      throw new Error('VITE_API_URL environment variable is not set. Please configure it in Vercel.')
+    }
+    return 'http://localhost:8000'
+  }
+  
   const cleanUrl = envUrl.trim().replace(/\/+$/, '')
   try {
-    new URL(cleanUrl)
+    const url = new URL(cleanUrl)
+    if (url.protocol !== 'https:' && import.meta.env.PROD) {
+      throw new Error('API URL must use HTTPS in production')
+    }
     return cleanUrl
-  } catch {
+  } catch (e) {
+    if (import.meta.env.PROD) {
+      throw new Error(`Invalid API URL: ${envUrl}. ${e.message}`)
+    }
     return 'http://localhost:8000'
   }
 }
