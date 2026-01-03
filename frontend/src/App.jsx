@@ -5,8 +5,21 @@ import cartmanImage from './assets/cartman.png'
 import backgroundImage from './assets/background.jpg'
 import backgroundMobile from './assets/background-mobile.jpg'
 
-// Get API URL from environment variable or use localhost for development
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const getApiUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL
+  if (!envUrl) return 'http://localhost:8000'
+  
+  // Ensure URL is properly formatted (remove trailing slashes, ensure it's a valid URL)
+  const cleanUrl = envUrl.trim().replace(/\/+$/, '')
+  try {
+    new URL(cleanUrl)
+    return cleanUrl
+  } catch {
+    return 'http://localhost:8000'
+  }
+}
+
+const API_URL = getApiUrl()
 
 function App() {
   const [file, setFile] = useState(null)
@@ -125,7 +138,11 @@ function App() {
       })
       
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        const errorText = await response.text().catch(() => '')
+        if (response.status === 404) {
+          throw new Error('API endpoint not found. Please check API configuration.')
+        }
+        throw new Error(`Request failed: ${response.status}`)
       }
       
       const reader = response.body.getReader()
@@ -248,7 +265,11 @@ function App() {
       })
       
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        const errorText = await response.text().catch(() => '')
+        if (response.status === 404) {
+          throw new Error('API endpoint not found. Please check API configuration.')
+        }
+        throw new Error(`Request failed: ${response.status}`)
       }
       
       const reader = response.body.getReader()
