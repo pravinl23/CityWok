@@ -314,10 +314,24 @@ class AudioFingerprinter:
             incremental: If True, use incremental matching (default)
         """
         # Lazy load all databases if in lazy mode and not yet loaded
-        if self.lazy_load and len(self.loaded_seasons) < len(self.existing_dbs):
-            print(f"   Loading {len(self.existing_dbs)} databases (lazy load triggered)...")
-            self._load_all_databases()
-            print(f"   ✓ Loaded {len(self.loaded_seasons)} seasons")
+        if self.lazy_load:
+            if len(self.loaded_seasons) == 0:
+                print(f"   ⚠️  No databases loaded yet. Loading {len(self.existing_dbs)} databases...")
+                self._load_all_databases()
+                print(f"   ✓ Loaded {len(self.loaded_seasons)} seasons")
+            elif len(self.loaded_seasons) < len(self.existing_dbs):
+                print(f"   ⚠️  Only {len(self.loaded_seasons)}/{len(self.existing_dbs)} databases loaded. Loading remaining...")
+                self._load_all_databases()
+                print(f"   ✓ Loaded {len(self.loaded_seasons)} seasons")
+        
+        if len(self.loaded_seasons) == 0:
+            print(f"   ❌ ERROR: No databases loaded! Found {len(self.existing_dbs)} database files.")
+            return {
+                "match_found": False,
+                "unsure": True,
+                "message": "No databases loaded. Please check database files.",
+                "candidates": []
+            }
 
         start_time = time.time()
         
