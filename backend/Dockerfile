@@ -35,5 +35,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/test || exit 1
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
-
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WORKERS:-1}

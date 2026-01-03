@@ -98,5 +98,9 @@ echo "Starting API server..."
 echo "========================================"
 echo ""
 
+# Set default port if not provided
+PORT=${PORT:-8000}
+WORKERS=${WORKERS:-1}
+
 # Start the application
-exec "$@"
+exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WORKERS
