@@ -105,13 +105,5 @@ WORKERS=${WORKERS:-1}
 echo "Starting uvicorn on port $PORT with $WORKERS workers..."
 echo ""
 
-# Test if we can import the app before starting
-echo "Testing app import..."
-python -c "from app.main import app; print('✓ App imported successfully')" || {
-    echo "❌ Failed to import app"
-    exit 1
-}
-echo ""
-
 # Start the application
 exec python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WORKERS
