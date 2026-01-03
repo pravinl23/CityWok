@@ -106,4 +106,4 @@ echo "Starting uvicorn on port $PORT with $WORKERS workers..."
 echo ""
 
 # Start the application
-exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WORKERS
+exec python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WORKERS
