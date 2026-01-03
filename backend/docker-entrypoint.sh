@@ -105,5 +105,5 @@ WORKERS=${WORKERS:-1}
 echo "Starting uvicorn on port $PORT with $WORKERS workers..."
 echo ""
 
-# Start the application
-exec python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WORKERS
+# Start the application (don't use exec so we can see errors)
+python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WORKERS
