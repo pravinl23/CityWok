@@ -15,7 +15,13 @@ const getApiUrl = () => {
     return 'http://localhost:8000'
   }
   
-  const cleanUrl = envUrl.trim().replace(/\/+$/, '')
+  let cleanUrl = envUrl.trim().replace(/\/+$/, '')
+  
+  // Add https:// if protocol is missing
+  if (!cleanUrl.match(/^https?:\/\//)) {
+    cleanUrl = `https://${cleanUrl}`
+  }
+  
   try {
     const url = new URL(cleanUrl)
     if (url.protocol !== 'https:' && import.meta.env.PROD) {
