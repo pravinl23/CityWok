@@ -196,21 +196,20 @@ function App() {
         }
       }
     } catch (err) {
-      // Enhanced error handling
       let errorMessage = "An unexpected error occurred. Please try again.";
       
-      if (err.response?.status === 429) {
+      if (err.message?.includes('404') || err.message?.includes('not found')) {
+        errorMessage = "API endpoint not found. Please check your configuration.";
+      } else if (err.message?.includes('429') || err.message?.includes('rate limit')) {
         errorMessage = "Rate limit exceeded. You can make 10 requests per hour. Please try again later.";
-      } else if (err.response?.status === 400) {
-        errorMessage = err.response?.data?.detail || "Invalid request. Please check your file.";
-      } else if (err.response?.status === 502 || err.response?.status === 503) {
+      } else if (err.message?.includes('400') || err.message?.includes('Invalid')) {
+        errorMessage = "Invalid request. Please check your file.";
+      } else if (err.message?.includes('502') || err.message?.includes('503') || err.message?.includes('unavailable')) {
         errorMessage = "Server is temporarily unavailable. Please try again in a few moments.";
-      } else if (err.name === 'AbortError' || err.message.includes('timeout')) {
+      } else if (err.name === 'AbortError' || err.message?.includes('timeout')) {
         errorMessage = "Request timed out. Your file might be too long (max 2 minutes recommended).";
       } else if (!navigator.onLine) {
         errorMessage = "No internet connection. Please check your network and try again.";
-      } else if (err.message.includes('HTTP error')) {
-        errorMessage = "Server error occurred. Please try again later.";
       }
       
       setError(errorMessage);
@@ -323,21 +322,20 @@ function App() {
         }
       }
     } catch (err) {
-      // Enhanced error handling
       let errorMessage = "An unexpected error occurred. Please try again.";
       
-      if (err.response?.status === 429) {
+      if (err.message?.includes('404') || err.message?.includes('not found')) {
+        errorMessage = "API endpoint not found. Please check your configuration.";
+      } else if (err.message?.includes('429') || err.message?.includes('rate limit')) {
         errorMessage = "Rate limit exceeded. You can make 10 requests per hour. Please try again later.";
-      } else if (err.response?.status === 400) {
-        errorMessage = err.response?.data?.detail || "Invalid request. Please check your URL.";
-      } else if (err.response?.status === 502 || err.response?.status === 503) {
+      } else if (err.message?.includes('400') || err.message?.includes('Invalid')) {
+        errorMessage = "Invalid request. Please check your URL.";
+      } else if (err.message?.includes('502') || err.message?.includes('503') || err.message?.includes('unavailable')) {
         errorMessage = "Server is temporarily unavailable. Please try again in a few moments.";
-      } else if (err.name === 'AbortError' || err.message.includes('timeout')) {
+      } else if (err.name === 'AbortError' || err.message?.includes('timeout')) {
         errorMessage = "Request timed out. The URL might be unavailable or the server is busy.";
       } else if (!navigator.onLine) {
         errorMessage = "No internet connection. Please check your network and try again.";
-      } else if (err.message.includes('HTTP error')) {
-        errorMessage = "Server error occurred. Please try again later.";
       }
       
       setError(errorMessage);
