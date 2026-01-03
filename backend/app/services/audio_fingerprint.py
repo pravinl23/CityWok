@@ -315,7 +315,9 @@ class AudioFingerprinter:
         """
         # Lazy load all databases if in lazy mode and not yet loaded
         if self.lazy_load and len(self.loaded_seasons) < len(self.existing_dbs):
+            print(f"   Loading {len(self.existing_dbs)} databases (lazy load triggered)...")
             self._load_all_databases()
+            print(f"   ✓ Loaded {len(self.loaded_seasons)} seasons")
 
         start_time = time.time()
         
