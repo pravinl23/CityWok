@@ -93,13 +93,14 @@ class AudioFingerprinter:
         
         self._scan_databases()
         
-        # OPTIMIZATION B: Load common hash stoplist if exists - DISABLED for TikTok matching
-        # stoplist_path = os.path.join(self.data_dir, 'common_hash_stoplist_pkl.txt')
-        # if os.path.exists(stoplist_path):
-        #     self._load_stoplist(stoplist_path)
+        print(f"   Found {len(self.existing_dbs)} database files")
         
         if not self.lazy_load:
+            print(f"   Loading all {len(self.existing_dbs)} databases (eager mode)...")
             self._load_all_databases()
+            print(f"   ✓ Loaded {len(self.loaded_seasons)} seasons")
+        else:
+            print(f"   Lazy loading enabled - databases will load on first request")
 
     def _scan_databases(self):
         self.existing_dbs = []
@@ -153,25 +154,35 @@ class AudioFingerprinter:
             del data  # Explicitly free memory
             return True
         except Exception as e:
+            print(f"   ❌ Error loading {db_file}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def _load_all_databases(self):
         """Load all existing databases into memory."""
         start_time = time.time()
+        loaded_count = 0
         
         for db_file in self.existing_dbs:
             # Extract season number from filename
             match = re.search(r's(\d+)', db_file)
             if match:
                 season = int(match.group(1))
-                self._load_database(season)
+                if self._load_database(season):
+                    loaded_count += 1
+                else:
+                    print(f"   ⚠️  Failed to load {db_file}")
 
         elapsed = time.time() - start_time
         if self.season_fingerprints:
             total_eps = sum(len(eps) for eps in self.season_episodes.values())
+            print(f"   ✓ Loaded {loaded_count} seasons ({total_eps} episodes) in {elapsed:.1f}s")
             # Build IDF cache if enabled
             if self.use_idf_weighting:
                 self._build_hash_df_cache()
+        else:
+            print(f"   ❌ No databases loaded successfully!")
 
     def _load_stoplist(self, stoplist_path: str):
         """Load precomputed common hash stoplist from disk."""
@@ -316,16 +327,19 @@ class AudioFingerprinter:
         # Lazy load all databases if in lazy mode and not yet loaded
         if self.lazy_load:
             if len(self.loaded_seasons) == 0:
-                print(f"   ⚠️  No databases loaded yet. Loading {len(self.existing_dbs)} databases...")
+                print(f"   📦 Lazy loading: Loading {len(self.existing_dbs)} databases...")
                 self._load_all_databases()
-                print(f"   ✓ Loaded {len(self.loaded_seasons)} seasons")
+                if len(self.loaded_seasons) > 0:
+                    print(f"   ✓ Successfully loaded {len(self.loaded_seasons)} seasons")
+                else:
+                    print(f"   ❌ Failed to load databases!")
             elif len(self.loaded_seasons) < len(self.existing_dbs):
                 print(f"   ⚠️  Only {len(self.loaded_seasons)}/{len(self.existing_dbs)} databases loaded. Loading remaining...")
                 self._load_all_databases()
                 print(f"   ✓ Loaded {len(self.loaded_seasons)} seasons")
         
         if len(self.loaded_seasons) == 0:
-            print(f"   ❌ ERROR: No databases loaded! Found {len(self.existing_dbs)} database files.")
+            print(f"   ❌ ERROR: No databases loaded! Found {len(self.existing_dbs)} database files in {self.data_dir}.")
             return {
                 "match_found": False,
                 "unsure": True,
