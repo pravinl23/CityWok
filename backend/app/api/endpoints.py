@@ -77,7 +77,7 @@ def get_platform_from_url(url: str) -> str:
 def validate_supported_url(url: str) -> bool:
     import re
     patterns = [
-        r'https?://(www\.)?(tiktok\.com|vm\.tiktok\.com)',
+        r'https?://(www\.)?(vt\.)?(tiktok\.com|vm\.tiktok\.com)',
         r'https?://(www\.)?(instagram\.com|instagr\.am)',
         r'https?://(www\.)?(youtube\.com|youtu\.be)',
     ]
