@@ -458,11 +458,6 @@ function App() {
                     </h3>
                     <div className="primary-result">
                       <p className="result-episode">Episode: {result.candidates[currentGuessIndex].episode_id}</p>
-                      <div className="result-details">
-                        <small>Confidence: {result.candidates[currentGuessIndex].confidence}%</small>
-                        <br/>
-                        <small>Aligned: {result.candidates[currentGuessIndex].aligned_matches}</small>
-                      </div>
                     </div>
                     
                     {currentGuessIndex < result.candidates.length - 1 ? (
@@ -484,15 +479,6 @@ function App() {
                     <div className="primary-result">
                       <p className="result-episode">Episode: {result.episode}</p>
                       <p className="result-timestamp">Time: {result.timestamp}</p>
-                      <div className="result-details">
-                        <small>Confidence: {result.confidence}%</small>
-                        {result.aligned_matches && (
-                          <>
-                            <br/>
-                            <small>Matched: {result.aligned_matches} fingerprints</small>
-                          </>
-                        )}
-                      </div>
                     </div>
                   </>
                 ) : (
