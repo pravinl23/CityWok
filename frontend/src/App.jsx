@@ -87,7 +87,7 @@ function App() {
   const validateUrl = (urlString) => {
     // Check if URL is from supported platforms: TikTok, Instagram, or YouTube
     const supportedPlatforms = [
-      /^https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com)/i,  // TikTok
+      /^https?:\/\/(www\.)?(vt\.)?(tiktok\.com|vm\.tiktok\.com)/i,  // TikTok (including vt.tiktok.com short URLs)
       /^https?:\/\/(www\.)?(instagram\.com|instagr\.am)/i,   // Instagram
       /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)/i,       // YouTube
     ];
