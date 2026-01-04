@@ -327,12 +327,16 @@ class AudioFingerprinter:
         # Lazy load all databases if in lazy mode and not yet loaded
         if self.lazy_load:
             if len(self.loaded_seasons) == 0:
-                print(f"   📦 Lazy loading: Loading {len(self.existing_dbs)} databases...")
+                print(f"   📦 Lazy loading: Loading {len(self.existing_dbs)} databases from {self.data_dir}...")
+                print(f"   Database files: {self.existing_dbs[:5]}...")  # Show first 5
                 self._load_all_databases()
                 if len(self.loaded_seasons) > 0:
-                    print(f"   ✓ Successfully loaded {len(self.loaded_seasons)} seasons")
+                    total_eps = sum(len(eps) for eps in self.season_episodes.values())
+                    print(f"   ✓ Successfully loaded {len(self.loaded_seasons)} seasons ({total_eps} episodes)")
                 else:
-                    print(f"   ❌ Failed to load databases!")
+                    print(f"   ❌ Failed to load databases! Check logs above for errors.")
+                    print(f"   Data dir exists: {os.path.exists(self.data_dir)}")
+                    print(f"   Data dir contents: {os.listdir(self.data_dir)[:10] if os.path.exists(self.data_dir) else 'N/A'}")
             elif len(self.loaded_seasons) < len(self.existing_dbs):
                 print(f"   ⚠️  Only {len(self.loaded_seasons)}/{len(self.existing_dbs)} databases loaded. Loading remaining...")
                 self._load_all_databases()
@@ -340,6 +344,8 @@ class AudioFingerprinter:
         
         if len(self.loaded_seasons) == 0:
             print(f"   ❌ ERROR: No databases loaded! Found {len(self.existing_dbs)} database files in {self.data_dir}.")
+            if self.existing_dbs:
+                print(f"   First DB file exists: {os.path.exists(os.path.join(self.data_dir, self.existing_dbs[0]))}")
             return {
                 "match_found": False,
                 "unsure": True,
