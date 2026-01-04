@@ -36,13 +36,15 @@ app.add_middleware(WAFMiddleware)
 ALLOWED_ORIGINS_STR = os.getenv("ALLOWED_ORIGINS", "*")
 if ALLOWED_ORIGINS_STR == "*":
     ALLOWED_ORIGINS = ["*"]
+    ALLOW_CREDENTIALS = False  # Cannot use credentials with wildcard origins
 else:
     ALLOWED_ORIGINS = [origin.strip() for origin in ALLOWED_ORIGINS_STR.split(",") if origin.strip()]
+    ALLOW_CREDENTIALS = True  # Can use credentials with specific origins
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=ALLOW_CREDENTIALS,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key"],
     max_age=3600,
