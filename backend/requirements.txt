@@ -2,8 +2,8 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 numpy>=2.0.0,<3.0.0
-librosa==0.10.1
-scipy==1.11.3
+librosa>=0.10.2
+scipy>=1.14.0
 soundfile==0.12.1
 yt-dlp>=2024.12.13
 boto3==1.29.7
