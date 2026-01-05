@@ -4,6 +4,7 @@ import './App.css'
 import cartmanImage from './assets/cartman.png'
 import backgroundImage from './assets/background.jpg'
 import backgroundMobile from './assets/background-mobile.jpg'
+import { formatEpisodeDisplay } from './episodeTitles'
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL
@@ -457,7 +458,7 @@ function App() {
                       {currentGuessIndex === 0 ? "I'm not quite sure, but this is my best guess" : `Guess ${currentGuessIndex + 1}`}
                     </h3>
                     <div className="primary-result">
-                      <p className="result-episode">Episode: {result.candidates[currentGuessIndex].episode_id}</p>
+                      <p className="result-episode">Episode: {formatEpisodeDisplay(result.candidates[currentGuessIndex].episode_id)}</p>
                     </div>
                     
                     {currentGuessIndex < result.candidates.length - 1 ? (
@@ -477,7 +478,7 @@ function App() {
                   <>
                     <h3 className="result-title">Match Found!</h3>
                     <div className="primary-result">
-                      <p className="result-episode">Episode: {result.episode}</p>
+                      <p className="result-episode">Episode: {formatEpisodeDisplay(result.episode)}</p>
                       <p className="result-timestamp">Time: {result.timestamp}</p>
                     </div>
                   </>
