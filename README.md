@@ -69,24 +69,6 @@ CityWok is a sophisticated audio recognition system that can identify specific e
 - **R2 Integration**: Automated download scripts for cloud-stored databases
 - **Volume Persistence**: Railway volumes for persistent storage across deployments
 
-## 🔒 Security & Production Features
-
-- **Rate Limiting**: IP-based throttling (10 requests/hour free, 100/hour with API key)
-- **API Authentication**: Optional API key system for enhanced rate limits
-- **WAF Protection**: Custom middleware for request validation and attack prevention
-- **Security Headers**: Comprehensive HTTP security headers (CSP, HSTS, X-Frame-Options, etc.)
-- **CORS Configuration**: Strict origin validation with environment-based configuration
-- **Input Validation**: File type and size validation, URL pattern matching
-- **Error Sanitization**: Generic error messages to prevent information leakage
-
-## 📊 Performance Metrics
-
-- **Database Size**: 6.5GB across 20 seasons
-- **Memory Usage**: Optimized to handle large datasets with lazy loading capabilities
-- **Response Time**: Sub-second matching for short clips with early exit optimizations
-- **Scalability**: Designed to handle 1000+ concurrent users with rate limiting
-- **Accuracy**: High-precision matching even with audio distortion and compression
-
 ## 🚀 Deployment
 
 The application is fully containerized and deployed on modern cloud platforms:
@@ -95,21 +77,26 @@ The application is fully containerized and deployed on modern cloud platforms:
 - **Frontend**: Vercel with automatic deployments from Git
 - **Storage**: Cloudflare R2 for cost-effective object storage
 
-## 🎓 Technical Skills Demonstrated
+## 🎓 Known Limitations and Potential Improvements
 
-- **Full-Stack Development**: End-to-end application development from backend API to frontend UI
-- **Audio Signal Processing**: Deep understanding of spectrograms, STFT, peak detection, and audio fingerprinting
-- **Algorithm Design**: Custom matching algorithms with multiple optimization strategies
-- **Performance Optimization**: Memory management, parallel processing, incremental algorithms
-- **Cloud Architecture**: Multi-service deployment, object storage integration, containerization
-- **Security Implementation**: Production-grade security measures and best practices
-- **Modern Python**: Async/await, type hints, modern dependency management
-- **Modern JavaScript**: React hooks, Server-Sent Events, responsive design patterns
+### Current Limitations
 
-## 📝 License
+1. **Distorted Audio Accuracy**: Heavily distorted, filtered, or compressed audio clips may produce inaccurate matches. The current audio-only fingerprinting approach struggles with extreme audio degradation.
 
-MIT License - Open source and available for learning and modification.
+2. **Multi-Clip Videos**: TikTok videos containing multiple episode clips are currently processed as a single audio stream, resulting in only one episode guess for the entire video rather than per-clip identification.
 
----
+3. **Dataset Quality**: The audio fingerprint database was generated from source episodes, and approximately ~3% of episodes may have misaligned or flipped episode numbers. Some episodes may be off by 1 episode number. This is due to dataset preparation constraints and manual verification was not feasible. If you notice incorrect episode matches, please reach out to report them.
 
-*Built with attention to performance, security, and user experience. A production-ready example of modern full-stack development with advanced signal processing.*
+### Planned Enhancements
+
+1. **Hybrid Audio-Visual Pipeline (2-Pass System)**:
+   - **Pass 1**: Audio fingerprinting (current system)
+   - **Pass 2**: Visual frame analysis using computer vision
+   - **Fusion**: Combine audio and visual confidence scores for improved accuracy on distorted audio
+   - **Use Case**: Better handling of heavily filtered, compressed, or distorted TikTok clips
+
+2. **Multi-Clip Detection and Segmentation**:
+   - **Scene Detection**: Integrate `pyscenedetect` to identify scene cuts and transitions in multi-clip videos
+   - **Per-Clip Matching**: Process each detected clip segment independently
+   - **Timeline Display**: Show a video timeline with episode guesses for each segment
+   - **Use Case**: TikTok compilations, reaction videos, or videos with multiple South Park clips
