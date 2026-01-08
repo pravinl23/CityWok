@@ -1,5 +1,7 @@
 # CityWok - Audio Fingerprinting Episode Identifier
 
+https://github.com/user-attachments/assets/68ff1af2-fc0c-48f5-a892-158e1be14e1c
+
 A production-ready, full-stack web application that identifies TV show episodes from short audio/video clips using advanced audio fingerprinting technology. Built with modern Python and React, featuring enterprise-grade performance optimizations and security.
 
 ## 🎯 Project Overview
